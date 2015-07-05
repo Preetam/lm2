@@ -15,14 +15,16 @@ BUILD_BINARY = ./liblistmap2.so
 # Test output
 TEST_DIR := ./test
 TEST_FLAGS = -Wall
-TEST_LINK_FLAGS = -llistmap2
+TEST_LINK_FLAGS = -llistmap2 -lpthread
 TEST_BINARY = test
+TEST_DATA_DIR = /tmp/listmap2/test/
 
 all: build build_test
 
 clean:
 	rm -r ./build
 	rm $(TEST_DIR)/$(TEST_BINARY)
+	rm -rf $(TEST_DATA_DIR)
 
 build:
 	mkdir -p ./build/
@@ -34,6 +36,11 @@ build_test:
 		-o $(TEST_DIR)/$(TEST_BINARY)
 
 test:
+	mkdir -p $(TEST_DATA_DIR)
 	LD_LIBRARY_PATH=$(BUILD_DIR)/:$LD_LIBRARY_PATH $(TEST_DIR)/$(TEST_BINARY)
 
-.PHONY: clean build build_test test
+test_leaks:
+	mkdir -p $(TEST_DATA_DIR)
+	LD_LIBRARY_PATH=$(BUILD_DIR)/:$LD_LIBRARY_PATH valgrind $(TEST_DIR)/$(TEST_BINARY)
+
+.PHONY: clean build build_test test test_leaks
