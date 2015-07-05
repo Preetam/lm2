@@ -18,6 +18,6 @@ private:
 	void* mapped;
 	pthread_rwlock_t lock;
 	FILE* file;
-	uint file_size;
+	size_t file_size;
 }; // DB
 } // lm2

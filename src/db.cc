@@ -27,8 +27,14 @@ lm2 :: DB :: DB(const char* path)
 
 	file_size = st.st_size;
 
-	mapped = mmap(nullptr, file_size, PROT_READ|PROT_WRITE,
-		MAP_SHARED|MAP_ANONYMOUS, fileno(file), 0);
+	mapped = mmap(nullptr, (size_t)file_size, PROT_READ|PROT_WRITE,
+		MAP_SHARED |
+		#ifdef __APPLE__
+		MAP_ANON
+		#else
+		MAP_ANONYMOUS
+		#endif
+		, -1, 0);
 	if ((int64_t)mapped == -1) {
 		fclose(file);
 		throw "couldn't mmap";
@@ -37,7 +43,7 @@ lm2 :: DB :: DB(const char* path)
 	pthread_rwlock_init(&lock, NULL);
 }
 
-lm2 :: DB :: ~DB() {
+lm2 :: DB :: ~DB() throw() {
 	std::cout << "closing lm2::DB at " << path << std::endl;
 	munmap(mapped, file_size);
 	fclose(file);
