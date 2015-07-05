@@ -1,7 +1,10 @@
 #include <listmap2.h>
 
 int
-main(void) {
-	listmap2_init();
+main() {
+	lm2_db_t* db = lm2_db_open("/tmp/listmap2/test");
+	if (db) {
+		lm2_db_close(db);
+	}
 	return 0;
 }
