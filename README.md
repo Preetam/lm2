@@ -1,6 +1,6 @@
-listmap2
+listmap2 (lm2)
 ===
-listmap2 is an ordered key-value storage library written in C++ (with a C interface).
+listmap2 (lm2) is an ordered key-value storage library written in C++ (with a C interface).
 
 It is still a work in progress.
 

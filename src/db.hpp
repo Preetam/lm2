@@ -1,9 +1,9 @@
 #pragma once
 
-#include <stdio.h>
-#include <pthread.h>
+#include <string> // std::string
 
-#include <string>
+#include <stdio.h>   // FILE
+#include <pthread.h> // pthread_rwlock_t
 
 namespace lm2
 {
