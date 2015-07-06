@@ -10,7 +10,7 @@ INCLUDE_DIRS_FLAGS := $(foreach d, $(INCLUDE_DIRS), -I$d)
 BUILD_DIR := ./build
 BUILD_FLAGS = -std=c++14 -Wall -shared -fPIC
 BUILD_LINK_FLAGS = -lpthread
-BUILD_BINARY = ./liblm2.so
+BUILD_BINARY = liblm2.so
 
 # Test output
 TEST_DIR := ./test
@@ -37,10 +37,10 @@ build_test:
 
 test:
 	mkdir -p $(TEST_DATA_DIR)
-	LD_LIBRARY_PATH=$(BUILD_DIR)/:$LD_LIBRARY_PATH $(TEST_DIR)/$(TEST_BINARY)
+	LD_LIBRARY_PATH=$(BUILD_DIR)/:$(LD_LIBRARY_PATH) $(TEST_DIR)/$(TEST_BINARY)
 
 test_leaks:
 	mkdir -p $(TEST_DATA_DIR)
-	LD_LIBRARY_PATH=$(BUILD_DIR)/:$LD_LIBRARY_PATH valgrind $(TEST_DIR)/$(TEST_BINARY)
+	LD_LIBRARY_PATH=$(BUILD_DIR)/:$(LD_LIBRARY_PATH) valgrind $(TEST_DIR)/$(TEST_BINARY)
 
 .PHONY: clean build build_test test test_leaks
