@@ -36,3 +36,12 @@ record info:
 ```
 
 28 bytes of overhead per k-v pair.
+
+---
+
+**File header**
+
+- Last block ID
+- Free list block start
+- Data block start
+- Last committed transaction ID
