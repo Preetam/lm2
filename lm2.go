@@ -1,6 +1,8 @@
 package lm2
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"os"
 	"sync"
@@ -8,6 +10,7 @@ import (
 )
 
 const BlockSize = 16 * 1024 // 16 kB
+const HeaderSize = 8 + 4 + 4 + 4
 
 // Block represents a set of key-value records.
 type Block struct {
@@ -50,7 +53,7 @@ type Record struct {
 
 type DB struct {
 	file     *os.File
-	filesize int64
+	fileSize int64
 	// Memory-mapped data file
 	mapped []byte
 
@@ -99,9 +102,25 @@ func NewDB(filepath string) (*DB, error) {
 		},
 	}
 
-	// Initialize
-	// - write header
-	// - initialize first data block
-
+	err = db.writeHeader()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
+}
+
+func (db *DB) Close() {
+	syscall.Munmap(db.mapped)
+	db.file.Close()
+}
+
+func (db *DB) writeHeader() error {
+	buf := bytes.NewBuffer(make([]byte, 0, HeaderSize))
+	err := binary.Write(buf, binary.LittleEndian, db.header)
+	if err != nil {
+		return err
+	}
+	copy(db.mapped, buf.Bytes())
+	return nil
 }

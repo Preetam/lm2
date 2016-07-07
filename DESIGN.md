@@ -30,12 +30,12 @@ record info:
 - prev (int32), 4 bytes // block ID
 - next (int32), 4 bytes // block ID
 - key size (uint16), 2 bytes
-- value size (uint16), 2 bytes
+- value size (uint16), 4 bytes
 - key
 - value
 ```
 
-28 bytes of overhead per k-v pair.
+30 bytes of overhead per k-v pair.
 
 ---
 
