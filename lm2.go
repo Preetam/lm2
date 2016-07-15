@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -14,9 +15,10 @@ const HeaderSize = 8 + 4 + 4 + 4
 
 // Block represents a set of key-value records.
 type Block struct {
-	id        uint32
-	nextBlock uint32
-	flags     uint8
+	id         uint32
+	nextBlock  uint32
+	flags      uint8
+	numRecords uint8
 
 	records []Record
 }
@@ -123,4 +125,52 @@ func (db *DB) writeHeader() error {
 	}
 	copy(db.mapped, buf.Bytes())
 	return nil
+}
+
+func (db *DB) readBlock(blockID uint32) (*Block, error) {
+	r := bytes.NewReader(db.mapped)
+	blockOffset := int64(blockID) * BlockSize
+	r.Seek(blockOffset, 0)
+	block := &Block{}
+	var err error
+	err = binary.Read(r, binary.LittleEndian, &block.id)
+	if err != nil {
+		return nil, err
+	}
+	if blockID != block.id {
+		// Inconsistent block ID.
+		return nil, errors.New("lm2: inconsistent block ID")
+	}
+	err = binary.Read(r, binary.LittleEndian, &block.nextBlock)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(r, binary.LittleEndian, &block.flags)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(r, binary.LittleEndian, &block.numRecords)
+	if err != nil {
+		return nil, err
+	}
+
+	// Consume the rest of the contents of this block
+	offset, err := r.Seek(0, 1)
+	if err != nil {
+		return nil, err
+	}
+	nextBlockOffset := int64(blockID+1) * BlockSize
+	recordBuf := bytes.NewBuffer(nil)
+	_, err = io.CopyN(recordBuf, r, nextBlockOffset-offset)
+	if err != nil {
+		return nil, err
+	}
+
+	// Follow overflow blocks
+	nextBlock := block.nextBlock
+	for nextBlock > 0 {
+		// TODO
+		break
+	}
+	return block, nil
 }

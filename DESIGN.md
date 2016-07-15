@@ -13,15 +13,30 @@ Blocks are identified by a number.
 `Block num * 16 kb` tells you where it's located.
 
 ```
-struct block
-{
-	flags (compressed, keys first, etc)
-    next_block
+struct block {
+	id uint32 // sanity check?
+	// Potential flags
+	// - Is free
+	// - Compressed
+	// - Keys first
+	// - Is overflow
+	flags uint8
+	nextBlock uint32 // blockID
+
+	numRecords uint8 // max 255 records
+	[]records
 }
 ```
 
-`next_block` is used for the next free block or overflow
+`nextBlock` is used for the next free block or overflow
 blocks.
+
+```
+struct overflow_block {
+	id, flags, nextBlock
+	void*
+}
+```
 
 ```
 record info:
@@ -30,7 +45,7 @@ record info:
 - prev (int32), 4 bytes // block ID
 - next (int32), 4 bytes // block ID
 - key size (uint16), 2 bytes
-- value size (uint16), 4 bytes
+- value size (uint32), 4 bytes
 - key
 - value
 ```
