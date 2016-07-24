@@ -12,9 +12,9 @@ First block starts at `1 * 16 kb`.
 Blocks are identified by a number.
 `Block num * 16 kb` tells you where it's located.
 
-```
-struct block {
-	id uint32 // sanity check?
+```go
+type block struct {
+	id uint32
 	// Potential flags
 	// - Is free
 	// - Compressed
@@ -28,15 +28,7 @@ struct block {
 }
 ```
 
-`nextBlock` is used for the next free block or overflow
-blocks.
-
-```
-struct overflow_block {
-	id, flags, nextBlock
-	void*
-}
-```
+`nextBlock` is used for the next free block.
 
 ```
 record info:
@@ -45,18 +37,20 @@ record info:
 - prev (int32), 4 bytes // block ID
 - next (int32), 4 bytes // block ID
 - key size (uint16), 2 bytes
-- value size (uint32), 4 bytes
+- value size (uint16), 2 bytes
 - key
 - value
 ```
 
-30 bytes of overhead per k-v pair.
+28 bytes of overhead per k-v pair.
+
+The combined key+value size must be less than 16,000 bytes.
 
 ---
 
 **File header**
 
-- Last block ID
+- Last allocated block ID
+- Current block accepting writes
 - Free list block start
-- Data block start
 - Last committed transaction ID
