@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type collection struct {
+type Collection struct {
 	fileHeader
 	f     *os.File
 	cache *keyCache
@@ -53,7 +53,7 @@ func (kc *keyCache) findLastLessThan(key string) int64 {
 }
 
 func (kc *keyCache) push(key string, offset int64) {
-	if rand.Float32() > 0.1 {
+	if rand.Float32() >= 0.04 {
 		return
 	}
 	if kc.cache[key] < offset {
@@ -67,7 +67,7 @@ func (kc *keyCache) push(key string, offset int64) {
 	}
 }
 
-func (c *collection) readRecord(offset int64) (*record, error) {
+func (c *Collection) readRecord(offset int64) (*record, error) {
 	if offset == 0 {
 		return nil, errors.New("lm2: invalid record offset")
 	}
@@ -101,7 +101,7 @@ func (c *collection) readRecord(offset int64) (*record, error) {
 	}, nil
 }
 
-func (c *collection) setRecordNext(offset int64, next int64) error {
+func (c *Collection) setRecordNext(offset int64, next int64) error {
 	_, err := c.f.Seek(offset, 0)
 	if err != nil {
 		return err
@@ -109,7 +109,7 @@ func (c *collection) setRecordNext(offset int64, next int64) error {
 	return binary.Write(c.f, binary.LittleEndian, next)
 }
 
-func (c *collection) nextRecord(rec *record) *record {
+func (c *Collection) nextRecord(rec *record) *record {
 	if rec == nil {
 		return nil
 	}
@@ -120,7 +120,7 @@ func (c *collection) nextRecord(rec *record) *record {
 	return nextRec
 }
 
-func (c *collection) writeRecord(rec *record) (int64, error) {
+func (c *Collection) writeRecord(rec *record) (int64, error) {
 	offset, err := c.f.Seek(0, 2)
 	if err != nil {
 		return 0, err
@@ -143,10 +143,12 @@ func (c *collection) writeRecord(rec *record) (int64, error) {
 		return 0, err
 	}
 
+	c.cache.push(rec.Key, offset)
+
 	return offset, nil
 }
 
-func (c *collection) updateRecordHeader(offset int64, header recordHeader) error {
+func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
 	_, err := c.f.Seek(offset, 0)
 	if err != nil {
 		return err
@@ -154,7 +156,7 @@ func (c *collection) updateRecordHeader(offset int64, header recordHeader) error
 	return binary.Write(c.f, binary.LittleEndian, header)
 }
 
-func (c *collection) set(key, value string) error {
+func (c *Collection) set(key, value string) error {
 	// find last less than key
 
 	if c.Head == 0 { // first record
@@ -235,56 +237,88 @@ func (c *collection) set(key, value string) error {
 	return c.updateRecordHeader(prevRec.Offset, prevRec.recordHeader)
 }
 
-func newCollection(file string) (*collection, error) {
+func NewCollection(file string) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
 	}
-	return &collection{
+
+	c := &Collection{
 		f: f,
 		cache: &keyCache{
 			cache: map[string]int64{},
-			size:  1024,
+			size:  8192,
 		},
-	}, nil
+	}
+
+	// write file header
+	c.fileHeader.Head = 0
+	c.f.Seek(0, 0)
+	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
+	if err != nil {
+		c.f.Close()
+		return nil, err
+	}
+	return c, nil
 }
 
-func (c *collection) close() {
+func OpenCollection(file string) (*Collection, error) {
+	f, err := os.OpenFile(file, os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &Collection{
+		f: f,
+		cache: &keyCache{
+			cache: map[string]int64{},
+			size:  8192,
+		},
+	}
+
+	// read file header
+	c.fileHeader.Head = 0
+	c.f.Seek(0, 0)
+	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
+	if err != nil {
+		c.f.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func (c *Collection) close() {
 	c.f.Close()
 }
 
 func main() {
-	c, err := newCollection("/tmp/test.lm2")
+	c, err := NewCollection("/tmp/test.lm2")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer c.close()
 
 	const N = 5000
-	vals := map[string]string{}
-	randStart := time.Now()
-	for i := 0; i < N*8; i++ {
-		vals[fmt.Sprint(rand.Intn(N*4))] = fmt.Sprint(i)
-	}
-	randEnd := time.Now()
-	for key, val := range vals {
+	insertStart := time.Now()
+	for i := 0; i < N; i++ {
+		key := fmt.Sprint(rand.Intn(N * 4))
+		val := fmt.Sprint(i)
 		if err := c.set(key, val); err != nil {
 			log.Fatal(err)
 		}
 	}
 	insertEnd := time.Now()
 
-	rec, err := c.readRecord(c.Head)
+	cur, err := c.NewCursor()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	for ; rec != nil; rec = c.nextRecord(rec) {
-		if rec.Deleted > 0 {
-			continue
-		}
-		log.Println(rec.Key, "=>", rec.Value)
+	for cur.Next() {
+		log.Println(cur.Key(), "=>", cur.Value())
 	}
 
-	log.Println(randEnd.Sub(randStart), insertEnd.Sub(randEnd))
+	iterationEnd := time.Now()
+
+	log.Println(insertEnd.Sub(insertStart), iterationEnd.Sub(insertEnd))
+	log.Println(len(c.cache.cache))
 }
