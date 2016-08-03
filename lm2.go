@@ -277,9 +277,8 @@ func OpenCollection(file string) (*Collection, error) {
 	}
 
 	// read file header
-	c.fileHeader.Head = 0
 	c.f.Seek(0, 0)
-	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
+	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
 		c.f.Close()
 		return nil, err
