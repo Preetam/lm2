@@ -24,13 +24,13 @@ func Test1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.close()
+	defer c.Close()
 
 	const N = 5000
 	for i := 0; i < N; i++ {
 		key := fmt.Sprint(rand.Intn(N * 4))
 		val := fmt.Sprint(i)
-		if err := c.set(key, val); err != nil {
+		if err := c.Set(key, val); err != nil {
 			t.Fatal(err)
 		}
 	}

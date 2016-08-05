@@ -153,7 +153,7 @@ func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error
 	return binary.Write(c.f, binary.LittleEndian, header)
 }
 
-func (c *Collection) set(key, value string) error {
+func (c *Collection) Set(key, value string) error {
 	// find last less than key
 
 	if c.Head == 0 { // first record
@@ -283,6 +283,6 @@ func OpenCollection(file string) (*Collection, error) {
 	return c, nil
 }
 
-func (c *Collection) close() {
+func (c *Collection) Close() {
 	c.f.Close()
 }

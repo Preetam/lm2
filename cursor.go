@@ -28,6 +28,7 @@ func (c *Cursor) Next() bool {
 	}
 
 	if c.first {
+		c.first = false
 		return true
 	}
 
