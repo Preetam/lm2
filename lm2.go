@@ -1,13 +1,10 @@
-package main
+package lm2
 
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
-	"log"
 	"math/rand"
 	"os"
-	"time"
 )
 
 type Collection struct {
@@ -238,7 +235,7 @@ func (c *Collection) set(key, value string) error {
 }
 
 func NewCollection(file string) (*Collection, error) {
-	f, err := os.OpenFile(file, os.O_RDWR, 0666)
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -288,36 +285,4 @@ func OpenCollection(file string) (*Collection, error) {
 
 func (c *Collection) close() {
 	c.f.Close()
-}
-
-func main() {
-	c, err := NewCollection("/tmp/test.lm2")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer c.close()
-
-	const N = 5000
-	insertStart := time.Now()
-	for i := 0; i < N; i++ {
-		key := fmt.Sprint(rand.Intn(N * 4))
-		val := fmt.Sprint(i)
-		if err := c.set(key, val); err != nil {
-			log.Fatal(err)
-		}
-	}
-	insertEnd := time.Now()
-
-	cur, err := c.NewCursor()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for cur.Next() {
-		log.Println(cur.Key(), "=>", cur.Value())
-	}
-
-	iterationEnd := time.Now()
-
-	log.Println(insertEnd.Sub(insertStart), iterationEnd.Sub(insertEnd))
-	log.Println(len(c.cache.cache))
 }

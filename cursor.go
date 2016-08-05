@@ -1,4 +1,4 @@
-package main
+package lm2
 
 type Cursor struct {
 	collection *Collection
