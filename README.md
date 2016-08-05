@@ -4,11 +4,6 @@ lm2 (listmap2) is an ordered key-value storage library.
 
 It is still a work in progress.
 
-Design
----
-
-DESIGN.md has some design notes.
-
 Some interesting links:
 
 * [Unrolled linked list][unrolled linked list]
