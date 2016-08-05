@@ -174,6 +174,9 @@ func (c *Collection) Set(key, value string) error {
 
 	// read the head
 	rec, err := c.readRecord(c.Head)
+	if err != nil {
+		return err
+	}
 	if rec.Key > key { // we have a new head
 		// write new record
 		newRecordOffset, err := c.writeRecord(&record{
@@ -232,6 +235,35 @@ func (c *Collection) Set(key, value string) error {
 
 	prevRec.Next = newRecordOffset
 	return c.updateRecordHeader(prevRec.Offset, prevRec.recordHeader)
+}
+
+func (c *Collection) Delete(key string) error {
+	// find last less than key
+
+	if c.Head == 0 { // first record
+		return nil
+	}
+
+	// read the head
+	rec, err := c.readRecord(c.Head)
+	if err != nil {
+		return err
+	}
+
+	for rec != nil {
+		if rec.Key > key {
+			break
+		}
+		if rec.Key == key && rec.Deleted == 0 {
+			rec.Deleted = 1
+			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
+			if err != nil {
+				return err
+			}
+		}
+		rec = c.nextRecord(rec)
+	}
+	return nil
 }
 
 func NewCollection(file string) (*Collection, error) {

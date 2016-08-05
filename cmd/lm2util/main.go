@@ -62,6 +62,11 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+	case "delete"
+		err = c.Delete(*key)
+		if err != nil {
+			log.Fatal(err)
+		}
 	default:
 		log.Fatal("unknown command", *cmd)
 	}
