@@ -62,7 +62,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-	case "delete"
+	case "delete":
 		err = c.Delete(*key)
 		if err != nil {
 			log.Fatal(err)
