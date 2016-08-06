@@ -14,7 +14,7 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 	return &Cursor{
 		collection: c,
 		current:    head,
-		first:      false,
+		first:      true,
 	}, nil
 }
 
@@ -37,8 +37,17 @@ func (c *Cursor) Next() bool {
 		c.current = nil
 		return false
 	}
-
 	c.current = rec
+
+	for c.current.Deleted > 0 {
+		rec, err = c.collection.readRecord(c.current.Next)
+		if err != nil {
+			c.current = nil
+			return false
+		}
+		c.current = rec
+	}
+
 	return true
 }
 

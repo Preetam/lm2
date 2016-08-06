@@ -32,11 +32,18 @@ type record struct {
 }
 
 type keyCache struct {
-	cache map[string]int64
-	size  int
+	cache        map[string]int64
+	maxKey       string
+	maxKeyOffset int64
+	size         int
 }
 
 func (kc *keyCache) findLastLessThan(key string) int64 {
+	if kc.maxKey != "" {
+		if kc.maxKey < key {
+			return kc.maxKeyOffset
+		}
+	}
 	max := ""
 	for k := range kc.cache {
 		if k >= key {
@@ -50,6 +57,11 @@ func (kc *keyCache) findLastLessThan(key string) int64 {
 }
 
 func (kc *keyCache) push(key string, offset int64) {
+	if kc.maxKey < key {
+		kc.maxKey = key
+		kc.maxKeyOffset = offset
+		return
+	}
 	if rand.Float32() >= 0.04 {
 		return
 	}
@@ -271,12 +283,17 @@ func NewCollection(file string) (*Collection, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = f.Truncate(0)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
 
 	c := &Collection{
 		f: f,
 		cache: &keyCache{
 			cache: map[string]int64{},
-			size:  8192,
+			size:  1000000,
 		},
 	}
 
