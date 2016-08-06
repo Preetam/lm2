@@ -7,10 +7,12 @@ import (
 	"os"
 )
 
+const cacheSize = 1000000
+
 type Collection struct {
 	fileHeader
 	f     *os.File
-	cache *keyCache
+	cache *recordCache
 }
 
 type fileHeader struct {
@@ -31,46 +33,48 @@ type record struct {
 	Value  string
 }
 
-type keyCache struct {
-	cache        map[string]int64
-	maxKey       string
-	maxKeyOffset int64
+type recordCache struct {
+	cache        map[int64]*record
+	maxKeyRecord *record
 	size         int
 }
 
-func (kc *keyCache) findLastLessThan(key string) int64 {
-	if kc.maxKey != "" {
-		if kc.maxKey < key {
-			return kc.maxKeyOffset
+func (rc *recordCache) findLastLessThan(key string) int64 {
+	if rc.maxKeyRecord != nil {
+		if rc.maxKeyRecord.Key < key {
+			return rc.maxKeyRecord.Offset
 		}
 	}
 	max := ""
-	for k := range kc.cache {
-		if k >= key {
+	maxOffset := int64(0)
+	for offset, record := range rc.cache {
+		if record.Key >= key {
 			continue
 		}
-		if k > max {
-			max = k
+		if record.Key > max {
+			max = record.Key
+			maxOffset = offset
 		}
 	}
-	return kc.cache[max]
+	return maxOffset
 }
 
-func (kc *keyCache) push(key string, offset int64) {
-	if kc.maxKey < key {
-		kc.maxKey = key
-		kc.maxKeyOffset = offset
+func (rc *recordCache) push(rec *record) {
+	if rc.maxKeyRecord == nil {
+		rc.maxKeyRecord = rec
+		return
+	}
+	if rc.maxKeyRecord.Key < rec.Key {
+		rc.maxKeyRecord = rec
 		return
 	}
 	if rand.Float32() >= 0.04 {
 		return
 	}
-	if kc.cache[key] < offset {
-		kc.cache[key] = offset
-	}
-	if len(kc.cache) > kc.size {
-		for k := range kc.cache {
-			delete(kc.cache, k)
+	rc.cache[rec.Offset] = rec
+	if len(rc.cache) > rc.size {
+		for k := range rc.cache {
+			delete(rc.cache, k)
 			return
 		}
 	}
@@ -80,6 +84,11 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	if offset == 0 {
 		return nil, errors.New("lm2: invalid record offset")
 	}
+
+	if rec := c.cache.cache[offset]; rec != nil {
+		return rec, nil
+	}
+
 	_, err := c.f.Seek(offset, 0)
 	if err != nil {
 		return nil, err
@@ -100,14 +109,16 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	key := string(keyValBuf[:int(header.KeyLen)])
 	value := string(keyValBuf[int(header.KeyLen):])
 
-	c.cache.push(key, offset)
-
-	return &record{
+	rec := &record{
 		recordHeader: header,
 		Offset:       offset,
 		Key:          key,
 		Value:        value,
-	}, nil
+	}
+
+	c.cache.push(rec)
+
+	return rec, nil
 }
 
 func (c *Collection) setRecordNext(offset int64, next int64) error {
@@ -152,7 +163,7 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 		return 0, err
 	}
 
-	c.cache.push(rec.Key, offset)
+	c.cache.push(rec)
 
 	return offset, nil
 }
@@ -291,9 +302,9 @@ func NewCollection(file string) (*Collection, error) {
 
 	c := &Collection{
 		f: f,
-		cache: &keyCache{
-			cache: map[string]int64{},
-			size:  1000000,
+		cache: &recordCache{
+			cache: map[int64]*record{},
+			size:  cacheSize,
 		},
 	}
 
@@ -316,9 +327,9 @@ func OpenCollection(file string) (*Collection, error) {
 
 	c := &Collection{
 		f: f,
-		cache: &keyCache{
-			cache: map[string]int64{},
-			size:  8192,
+		cache: &recordCache{
+			cache: map[int64]*record{},
+			size:  cacheSize,
 		},
 	}
 
