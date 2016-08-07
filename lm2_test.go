@@ -111,7 +111,7 @@ func TestCopy(t *testing.T) {
 	}
 	defer c.Close()
 
-	const N = 100000
+	const N = 10000
 	firstWriteStart := time.Now()
 	for i := 0; i < N; i++ {
 		key := fmt.Sprintf("%019d-%019d-%019d-%019d-%019d-%019d-%019d-%019d",
@@ -161,4 +161,8 @@ func TestCopy(t *testing.T) {
 	secondEnd := time.Now()
 	t.Log("Time to iterate through first list:", firstEnd.Sub(firstStart), "with", count1, "elements")
 	t.Log("Time to iterate through second list:", secondEnd.Sub(secondStart), "with", count2, "elements")
+
+	if count1 != count2 || count1 != N {
+		t.Errorf("incorrect count. N = %d, count1 = %d, count2 = %d", N, count1, count2)
+	}
 }
