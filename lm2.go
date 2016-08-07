@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const cacheSize = 1000000
+const cacheSize = 100000
 
 type Collection struct {
 	fileHeader
@@ -35,8 +35,20 @@ type record struct {
 
 type recordCache struct {
 	cache        map[int64]*record
+	dirty        map[int64]bool
 	maxKeyRecord *record
 	size         int
+
+	c *Collection
+}
+
+func newCache(size int) *recordCache {
+	return &recordCache{
+		cache:        map[int64]*record{},
+		dirty:        map[int64]bool{},
+		maxKeyRecord: nil,
+		size:         size,
+	}
 }
 
 func (rc *recordCache) findLastLessThan(key string) int64 {
@@ -47,6 +59,7 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 	}
 	max := ""
 	maxOffset := int64(0)
+	//start := time.Now()
 	for offset, record := range rc.cache {
 		if record.Key >= key {
 			continue
@@ -56,27 +69,34 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 			maxOffset = offset
 		}
 	}
+	if len(rc.cache) == 10000 {
+		//log.Println("cache lookup time:", time.Now().Sub(start))
+	}
 	return maxOffset
 }
 
 func (rc *recordCache) push(rec *record) {
-	if rc.maxKeyRecord == nil {
+	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
 		rc.maxKeyRecord = rec
-		return
-	}
-	if rc.maxKeyRecord.Key < rec.Key {
-		rc.maxKeyRecord = rec
-		return
-	}
-	if rand.Float32() >= 0.04 {
+	} else if rand.Float32() >= 0.04 {
 		return
 	}
 	rc.cache[rec.Offset] = rec
 	if len(rc.cache) > rc.size {
+		deletedKey := int64(0)
 		for k := range rc.cache {
-			delete(rc.cache, k)
+			if k == rc.maxKeyRecord.Offset {
+				continue
+			}
+			deletedKey = k
 			return
 		}
+		if rc.dirty[deletedKey] {
+			// This is a dirty record. Flush changes to disk.
+			rc.c.updateRecordHeader(deletedKey, rc.cache[deletedKey].recordHeader)
+			delete(rc.dirty, deletedKey)
+		}
+		delete(rc.cache, deletedKey)
 	}
 }
 
@@ -122,6 +142,11 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 }
 
 func (c *Collection) setRecordNext(offset int64, next int64) error {
+	if rec := c.cache.cache[offset]; rec != nil {
+		rec.recordHeader.Next = next
+		c.cache.dirty[offset] = true
+		return nil
+	}
 	_, err := c.f.Seek(offset, 0)
 	if err != nil {
 		return err
@@ -163,12 +188,18 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 		return 0, err
 	}
 
+	rec.Offset = offset
 	c.cache.push(rec)
 
 	return offset, nil
 }
 
 func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
+	if rec := c.cache.cache[offset]; rec != nil {
+		rec.recordHeader = header
+		c.cache.dirty[offset] = true
+		return nil
+	}
 	_, err := c.f.Seek(offset, 0)
 	if err != nil {
 		return err
@@ -301,12 +332,10 @@ func NewCollection(file string) (*Collection, error) {
 	}
 
 	c := &Collection{
-		f: f,
-		cache: &recordCache{
-			cache: map[int64]*record{},
-			size:  cacheSize,
-		},
+		f:     f,
+		cache: newCache(cacheSize),
 	}
+	c.cache.c = c
 
 	// write file header
 	c.fileHeader.Head = 0
@@ -326,12 +355,10 @@ func OpenCollection(file string) (*Collection, error) {
 	}
 
 	c := &Collection{
-		f: f,
-		cache: &recordCache{
-			cache: map[int64]*record{},
-			size:  cacheSize,
-		},
+		f:     f,
+		cache: newCache(cacheSize),
 	}
+	c.cache.c = c
 
 	// read file header
 	c.f.Seek(0, 0)

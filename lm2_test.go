@@ -7,17 +7,20 @@ import (
 	"time"
 )
 
-func verifyOrder(t *testing.T, c *Collection) {
+func verifyOrder(t *testing.T, c *Collection) int {
+	count := 0
 	prev := ""
 	cur, err := c.NewCursor()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for cur.Next() {
+		count++
 		if cur.Key() < prev {
 			t.Errorf("key %v greater than previous key %v", cur.Key(), prev)
 		}
 	}
+	return count
 }
 
 func Test1(t *testing.T) {
@@ -108,14 +111,18 @@ func TestCopy(t *testing.T) {
 	}
 	defer c.Close()
 
-	const N = 10000
+	const N = 100000
+	firstWriteStart := time.Now()
 	for i := 0; i < N; i++ {
-		key := fmt.Sprint(i)
+		key := fmt.Sprintf("%019d-%019d-%019d-%019d-%019d-%019d-%019d-%019d",
+			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63(),
+			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63())
 		val := fmt.Sprint(i)
 		if err := c.Set(key, val); err != nil {
 			t.Fatal(err)
 		}
 	}
+	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
 	verifyOrder(t, c)
 
 	c2, err := NewCollection("/tmp/test_copy_copy.lm2")
@@ -128,20 +135,30 @@ func TestCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for cur.Next() {
-		err := c2.Set(cur.Key(), cur.Value())
+
+	work := make(chan [2]string, 100)
+	go func() {
+		for cur.Next() {
+			work <- [2]string{cur.Key(), cur.Value()}
+		}
+		close(work)
+	}()
+
+	secondWriteStart := time.Now()
+	for pair := range work {
+		err = c2.Set(pair[0], pair[1])
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+	t.Log("Second write pass time:", time.Now().Sub(secondWriteStart))
 
 	firstStart := time.Now()
-	verifyOrder(t, c)
+	count1 := verifyOrder(t, c)
 	firstEnd := time.Now()
 	secondStart := firstEnd
-	verifyOrder(t, c2)
+	count2 := verifyOrder(t, c2)
 	secondEnd := time.Now()
-	t.Log("Time to iterate through first list:", firstEnd.Sub(firstStart))
-	t.Log("Time to iterate through second list:", secondEnd.Sub(secondStart))
-
+	t.Log("Time to iterate through first list:", firstEnd.Sub(firstStart), "with", count1, "elements")
+	t.Log("Time to iterate through second list:", secondEnd.Sub(secondStart), "with", count2, "elements")
 }
