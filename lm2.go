@@ -16,12 +16,13 @@ type Collection struct {
 }
 
 type fileHeader struct {
-	Head int64
+	Head       int64
+	LastCommit int64 // Unused for now
 }
 
 type recordHeader struct {
 	Next    int64
-	Deleted byte
+	Deleted int64
 	KeyLen  uint16
 	ValLen  uint32
 }
