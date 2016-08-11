@@ -4,6 +4,7 @@ type Cursor struct {
 	collection *Collection
 	current    *record
 	first      bool
+	snapshot   int64
 }
 
 func (c *Collection) NewCursor() (*Cursor, error) {
@@ -15,6 +16,7 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 		collection: c,
 		current:    head,
 		first:      true,
+		snapshot:   c.LastCommit,
 	}, nil
 }
 
@@ -39,7 +41,8 @@ func (c *Cursor) Next() bool {
 	}
 	c.current = rec
 
-	for c.current.Deleted > 0 {
+	for (c.current.Deleted != 0 && c.current.Deleted < c.snapshot) ||
+		(c.current.Offset > c.snapshot) {
 		rec, err = c.collection.readRecord(c.current.Next)
 		if err != nil {
 			c.current = nil
@@ -82,7 +85,7 @@ func (c *Cursor) Seek(key string) {
 		if rec.Key > key {
 			break
 		}
-		if rec.Deleted > 0 {
+		if (rec.Deleted > 0 && rec.Deleted < c.snapshot) || (c.current.Offset > c.snapshot) {
 			continue
 		}
 		if rec.Key <= key {

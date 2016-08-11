@@ -60,7 +60,7 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 	}
 	max := ""
 	maxOffset := int64(0)
-	//start := time.Now()
+
 	for offset, record := range rc.cache {
 		if record.Key >= key {
 			continue
@@ -69,9 +69,6 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 			max = record.Key
 			maxOffset = offset
 		}
-	}
-	if len(rc.cache) == 10000 {
-		//log.Println("cache lookup time:", time.Now().Sub(start))
 	}
 	return maxOffset
 }
@@ -192,6 +189,8 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 	rec.Offset = offset
 	c.cache.push(rec)
 
+	c.LastCommit = offset
+
 	return offset, nil
 }
 
@@ -266,7 +265,7 @@ func (c *Collection) Set(key, value string) error {
 		}
 		if rec.Key == key {
 			// Equal key. Delete because we're overwriting.
-			rec.Deleted = 1
+			rec.Deleted = c.LastCommit
 			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
 			if err != nil {
 				return err
