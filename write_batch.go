@@ -25,3 +25,9 @@ func (wb *WriteBatch) Set(key, value string) {
 func (wb *WriteBatch) Delete(key string) {
 	wb.deletes[key] = struct{}{}
 }
+
+func (wb *WriteBatch) cleanup() {
+	for key := range wb.deletes {
+		delete(wb.sets, key)
+	}
+}

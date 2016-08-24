@@ -320,6 +320,15 @@ func (c *Collection) Delete(key string) error {
 	return nil
 }
 
+func (c *Collection) Update(wb *WriteBatch) error {
+	// Clean up.
+	wb.cleanup()
+
+	// TODO
+
+	return nil
+}
+
 func NewCollection(file string) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
