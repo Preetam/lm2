@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"sort"
 )
 
 const cacheSize = 100000
@@ -379,7 +380,9 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// Find and load records that will be modified into the cache.
 	recordsToLoad := []int64{}
 
+	keys := []string{}
 	for key := range wb.sets {
+		keys = append(keys, key)
 		offset, err := c.findLastLessThanOrEqual(key)
 		if err != nil {
 			return err
@@ -400,6 +403,9 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		c.cache.forcePush(rec)
 	}
+
+	// Sort keys to be inserted.
+	sort.Strings(keys)
 
 	// NOTE: we shouldn't be reading any more records after this point.
 	// TODO: assert it.
