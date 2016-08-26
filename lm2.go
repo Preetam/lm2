@@ -16,8 +16,9 @@ type Collection struct {
 }
 
 type fileHeader struct {
-	Head       int64
-	LastCommit int64 // Unused for now
+	Head          int64
+	LastCommit    int64 // Unused for now
+	LastLogCommit int64 // Unused for now
 }
 
 type recordHeader struct {
@@ -25,6 +26,11 @@ type recordHeader struct {
 	Deleted int64
 	KeyLen  uint16
 	ValLen  uint32
+}
+
+type sentinelRecord struct {
+	magic  uint32 // some fixed pattern
+	offset int64  // this record's offset
 }
 
 type record struct {
@@ -39,6 +45,7 @@ type recordCache struct {
 	dirty        map[int64]bool
 	maxKeyRecord *record
 	size         int
+	preventPurge bool
 
 	c *Collection
 }
@@ -80,7 +87,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 	rc.cache[rec.Offset] = rec
-	if len(rc.cache) > rc.size {
+	if len(rc.cache) > rc.size && !rc.preventPurge {
 		deletedKey := int64(0)
 		for k := range rc.cache {
 			if k == rc.maxKeyRecord.Offset {
@@ -96,6 +103,13 @@ func (rc *recordCache) push(rec *record) {
 		}
 		delete(rc.cache, deletedKey)
 	}
+}
+
+func (rc *recordCache) forcePush(rec *record) {
+	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
+		rc.maxKeyRecord = rec
+	}
+	rc.cache[rec.Offset] = rec
 }
 
 func (c *Collection) readRecord(offset int64) (*record, error) {
@@ -320,11 +334,91 @@ func (c *Collection) Delete(key string) error {
 	return nil
 }
 
+func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
+	offset := int64(0)
+
+	if c.Head == 0 {
+		// Empty collection.
+		return 0, nil
+	}
+
+	// read the head
+	rec, err := c.readRecord(c.Head)
+	if err != nil {
+		return 0, err
+	}
+	if rec.Key > key { // we have a new head
+		return 0, nil
+	}
+
+	cacheResult := c.cache.findLastLessThan(key)
+	if cacheResult != 0 {
+		rec, err = c.readRecord(cacheResult)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	offset = rec.Offset
+
+	for rec != nil {
+		if rec.Key > key {
+			break
+		}
+		rec = c.nextRecord(rec)
+	}
+
+	return offset, nil
+}
+
+// Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
 func (c *Collection) Update(wb *WriteBatch) error {
-	// Clean up.
+	// Clean up WriteBatch.
 	wb.cleanup()
 
-	// TODO
+	// Find and load records that will be modified into the cache.
+	recordsToLoad := []int64{}
+
+	for key := range wb.sets {
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			return err
+		}
+		if offset > 0 {
+			recordsToLoad = append(recordsToLoad, offset)
+		}
+	}
+
+	// Prevent cache purges.
+	c.cache.preventPurge = true
+	defer func() { c.cache.preventPurge = false }()
+
+	for _, offset := range recordsToLoad {
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			return err
+		}
+		c.cache.forcePush(rec)
+	}
+
+	// NOTE: we shouldn't be reading any more records after this point.
+	// TODO: assert it.
+
+	// Append new records with the appropriate "next" pointers.
+
+	// Write sentinel record.
+
+	// fsync data file.
+
+	// Mark deleted and overwritten records as "deleted" at sentinel offset.
+	// (This happens in memory.)
+
+	// ^ record changes should have been serialized + buffered. Write those entries
+	// out to the WAL.
+
+	// fsync WAL.
+
+	// Update + fsync data file header.
 
 	return nil
 }
