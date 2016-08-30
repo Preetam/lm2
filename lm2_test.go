@@ -166,3 +166,89 @@ func TestCopy(t *testing.T) {
 		t.Errorf("incorrect count. N = %d, count1 = %d, count2 = %d", N, count1, count2)
 	}
 }
+
+func TestWriteBatch(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "1"},
+		{"key2", "2"},
+		{"key3", "3"},
+		{"key4", "4"},
+	}
+
+	c, err := NewCollection("/tmp/test_writebatch.lm2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	wb := NewWriteBatch()
+	wb.Set("key1", "1")
+	wb.Set("key2", "2")
+	wb.Set("key3", "3")
+	wb.Set("key4", "4")
+
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		}
+		i++
+	}
+
+	expected = [][2]string{
+		{"key1", "5"},
+		{"key2", "6"},
+		{"key3", "7"},
+		{"key4", "8"},
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "5")
+	wb.Set("key2", "6")
+	wb.Set("key3", "7")
+	wb.Set("key4", "8")
+
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	cur, err = c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i = 0
+	for cur.Next() {
+		if cur.current.Deleted > 0 {
+			continue
+		}
+		t.Log(cur.Key(), "=>", cur.Value())
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		}
+		i++
+	}
+}

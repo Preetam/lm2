@@ -3,10 +3,13 @@ package lm2
 import (
 	"encoding/binary"
 	"errors"
+	"log"
 	"math/rand"
 	"os"
 	"sort"
 )
+
+const sentinelMagic = 0xDEAD10CC
 
 const cacheSize = 100000
 
@@ -209,6 +212,49 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 	return offset, nil
 }
 
+func (c *Collection) writeRecord2(rec *record) (int64, error) {
+	offset, err := c.f.Seek(0, 2)
+	if err != nil {
+		return 0, err
+	}
+
+	rec.KeyLen = uint16(len(rec.Key))
+	rec.ValLen = uint32(len(rec.Value))
+
+	err = binary.Write(c.f, binary.LittleEndian, rec.recordHeader)
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = c.f.WriteString(rec.Key)
+	if err != nil {
+		return 0, err
+	}
+	_, err = c.f.WriteString(rec.Value)
+	if err != nil {
+		return 0, err
+	}
+
+	rec.Offset = offset
+	return offset, nil
+}
+
+func (c *Collection) writeSentinel() (int64, error) {
+	offset, err := c.f.Seek(0, 2)
+	if err != nil {
+		return 0, err
+	}
+	sentinel := sentinelRecord{
+		magic:  sentinelMagic,
+		offset: offset,
+	}
+	err = binary.Write(c.f, binary.LittleEndian, sentinel)
+	if err != nil {
+		return 0, err
+	}
+	return offset + 12, nil
+}
+
 func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
 	if rec := c.cache.cache[offset]; rec != nil {
 		rec.recordHeader = header
@@ -385,6 +431,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		keys = append(keys, key)
 		offset, err := c.findLastLessThanOrEqual(key)
 		if err != nil {
+			log.Println(offset)
 			return err
 		}
 		if offset > 0 {
@@ -399,6 +446,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for _, offset := range recordsToLoad {
 		rec, err := c.readRecord(offset)
 		if err != nil {
+			log.Println(offset)
 			return err
 		}
 		c.cache.forcePush(rec)
@@ -412,12 +460,87 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	// Append new records with the appropriate "next" pointers.
 
+	overwrittenRecords := []int64{}
+	for _, key := range keys {
+		value := wb.sets[key]
+
+		// Find last less than.
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			log.Println(offset)
+			return err
+		}
+		if offset == 0 {
+			// Head.
+			rec := &record{
+				recordHeader: recordHeader{
+					Next: 0,
+				},
+				Key:   key,
+				Value: value,
+			}
+			newRecordOffset, err := c.writeRecord2(rec)
+			if err != nil {
+				return err
+			}
+			c.Head = newRecordOffset
+			continue
+		}
+		prevRec, err := c.readRecord(offset)
+		if err != nil {
+			log.Println(offset)
+			return err
+		}
+		rec := &record{
+			recordHeader: recordHeader{
+				Next: prevRec.Next,
+			},
+			Key:   key,
+			Value: value,
+		}
+		newRecordOffset, err := c.writeRecord2(rec)
+		prevRec.Next = newRecordOffset
+		if prevRec.Key == key {
+			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
+		}
+		c.cache.forcePush(rec)
+	}
+
 	// Write sentinel record.
+
+	currentOffset, err := c.writeSentinel()
+	if err != nil {
+		return err
+	}
 
 	// fsync data file.
 
 	// Mark deleted and overwritten records as "deleted" at sentinel offset.
 	// (This happens in memory.)
+
+	for key := range wb.deletes {
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			return err
+		}
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			log.Println(offset)
+			return err
+		}
+		if rec.Deleted == 0 {
+			rec.Deleted = currentOffset
+		}
+	}
+
+	for _, offset := range overwrittenRecords {
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			log.Println(offset)
+			return err
+		}
+		rec.Deleted = currentOffset
+	}
 
 	// ^ record changes should have been serialized + buffered. Write those entries
 	// out to the WAL.
