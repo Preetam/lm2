@@ -58,12 +58,16 @@ func main() {
 			fmt.Println(cur.Key(), "=>", cur.Value())
 		}
 	case "set":
-		err = c.Set(*key, *value)
+		wb := lm2.NewWriteBatch()
+		wb.Set(*key, *value)
+		err = c.Update(wb)
 		if err != nil {
 			log.Fatal(err)
 		}
 	case "delete":
-		err = c.Delete(*key)
+		wb := lm2.NewWriteBatch()
+		wb.Delete(*key)
+		err = c.Update(wb)
 		if err != nil {
 			log.Fatal(err)
 		}
