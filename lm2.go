@@ -118,7 +118,7 @@ func (rc *recordCache) forcePush(rec *record) {
 
 func (c *Collection) readRecord(offset int64) (*record, error) {
 	if offset == 0 {
-		return nil, errors.New("lm2: invalid record offset")
+		return nil, errors.New("lm2: invalid record offset 0")
 	}
 
 	if rec := c.cache.cache[offset]; rec != nil {
@@ -268,119 +268,6 @@ func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error
 	return binary.Write(c.f, binary.LittleEndian, header)
 }
 
-func (c *Collection) Set(key, value string) error {
-	// find last less than key
-
-	if c.Head == 0 { // first record
-		// write new record
-		newRecordOffset, err := c.writeRecord(&record{
-			Key:   key,
-			Value: value,
-		})
-		if err != nil {
-			return err
-		}
-
-		// set head to the new record offset
-		c.fileHeader.Head = newRecordOffset
-		c.f.Seek(0, 0)
-		return binary.Write(c.f, binary.LittleEndian, c.fileHeader)
-	}
-
-	// read the head
-	rec, err := c.readRecord(c.Head)
-	if err != nil {
-		return err
-	}
-	if rec.Key > key { // we have a new head
-		// write new record
-		newRecordOffset, err := c.writeRecord(&record{
-			recordHeader: recordHeader{
-				Next: rec.Offset,
-			},
-			Key:   key,
-			Value: value,
-		})
-		if err != nil {
-			return err
-		}
-
-		// set head to the new record offset
-		c.fileHeader.Head = newRecordOffset
-		c.f.Seek(0, 0)
-		return binary.Write(c.f, binary.LittleEndian, c.fileHeader)
-	}
-
-	cacheResult := c.cache.findLastLessThan(key)
-	if cacheResult != 0 {
-		rec, err = c.readRecord(cacheResult)
-		if err != nil {
-			return err
-		}
-	}
-
-	prevRec := rec
-	for rec != nil {
-		if rec.Key > key {
-			break
-		}
-		if rec.Key == key {
-			// Equal key. Delete because we're overwriting.
-			rec.Deleted = c.LastCommit
-			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
-			if err != nil {
-				return err
-			}
-		}
-		prevRec = rec
-		rec = c.nextRecord(rec)
-	}
-
-	// write the new record
-	newRecordOffset, err := c.writeRecord(&record{
-		recordHeader: recordHeader{
-			Next: prevRec.Next,
-		},
-		Key:   key,
-		Value: value,
-	})
-	if err != nil {
-		return err
-	}
-
-	prevRec.Next = newRecordOffset
-	return c.updateRecordHeader(prevRec.Offset, prevRec.recordHeader)
-}
-
-func (c *Collection) Delete(key string) error {
-	// find last less than key
-
-	if c.Head == 0 { // first record
-		return nil
-	}
-
-	// read the head
-	rec, err := c.readRecord(c.Head)
-	if err != nil {
-		return err
-	}
-
-	for rec != nil {
-		if rec.Key > key {
-			break
-		}
-		if rec.Key == key && rec.Deleted == 0 {
-			rec.Deleted = 1
-			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
-			if err != nil {
-				return err
-			}
-		}
-		rec = c.nextRecord(rec)
-	}
-	return nil
-}
-
 func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
 	offset := int64(0)
 
@@ -412,6 +299,7 @@ func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
 		if rec.Key > key {
 			break
 		}
+		offset = rec.Offset
 		rec = c.nextRecord(rec)
 	}
 
@@ -474,7 +362,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			// Head.
 			rec := &record{
 				recordHeader: recordHeader{
-					Next: 0,
+					Next: c.Head,
 				},
 				Key:   key,
 				Value: value,
@@ -504,6 +392,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 		}
 		c.cache.forcePush(rec)
+		c.cache.forcePush(prevRec)
 	}
 
 	// Write sentinel record.
@@ -548,7 +437,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// fsync WAL.
 
 	// Update + fsync data file header.
-
+	c.LastCommit = currentOffset
 	return nil
 }
 

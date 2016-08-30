@@ -23,87 +23,6 @@ func verifyOrder(t *testing.T, c *Collection) int {
 	return count
 }
 
-func Test1(t *testing.T) {
-	c, err := NewCollection("/tmp/test1.lm2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-
-	const N = 5000
-	for i := 0; i < N; i++ {
-		key := fmt.Sprint(rand.Intn(N * 4))
-		val := fmt.Sprint(i)
-		if err := c.Set(key, val); err != nil {
-			t.Fatal(err)
-		}
-	}
-	verifyOrder(t, c)
-}
-
-func Test2(t *testing.T) {
-	expected := [][2]string{
-		{"key1", "1"},
-		{"key2", "2"},
-		{"key3", "1"},
-	}
-
-	c, err := NewCollection("/tmp/test2.lm2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-
-	err = c.Set("key1", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = c.Set("key2", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = c.Set("key3", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = c.Set("key2", "2")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = c.Set("key4", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = c.Delete("key4")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	verifyOrder(t, c)
-
-	cur, err := c.NewCursor()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	i := 0
-	for cur.Next() {
-		if i == len(expected) {
-			t.Fatal("unexpected key", cur.Key())
-		}
-		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
-			t.Errorf("expected %v => %v, got %v => %v",
-				expected[i][0], expected[i][1], cur.Key(), cur.Value())
-		}
-		i++
-	}
-}
-
 func TestCopy(t *testing.T) {
 	c, err := NewCollection("/tmp/test_copy.lm2")
 	if err != nil {
@@ -118,7 +37,9 @@ func TestCopy(t *testing.T) {
 			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63(),
 			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63())
 		val := fmt.Sprint(i)
-		if err := c.Set(key, val); err != nil {
+		wb := NewWriteBatch()
+		wb.Set(key, val)
+		if err := c.Update(wb); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -145,12 +66,30 @@ func TestCopy(t *testing.T) {
 	}()
 
 	secondWriteStart := time.Now()
+	const batchSize = 100
+	remaining := batchSize
+	wb := NewWriteBatch()
 	for pair := range work {
-		err = c2.Set(pair[0], pair[1])
+		wb.Set(pair[0], pair[1])
+		remaining--
+
+		if remaining == 0 {
+			err := c2.Update(wb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			remaining = batchSize
+			wb = NewWriteBatch()
+		}
+	}
+
+	if remaining < batchSize {
+		err := c2.Update(wb)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	t.Log("Second write pass time:", time.Now().Sub(secondWriteStart))
 
 	firstStart := time.Now()
@@ -241,16 +180,36 @@ func TestWriteBatch(t *testing.T) {
 		if cur.current.Deleted > 0 {
 			continue
 		}
-		t.Log(cur.Key(), "=>", cur.Value())
 		if i == len(expected) {
 			t.Fatal("unexpected key", cur.Key())
 		}
 		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
 			t.Errorf("expected %v => %v, got %v => %v",
 				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+			t.Logf("%+#v", cur.current)
 		}
 		i++
 	}
+}
+
+func TestWriteBatch1(t *testing.T) {
+	c, err := NewCollection("/tmp/test_writebatch1.lm2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	const N = 5000
+	for i := 0; i < N; i++ {
+		wb := NewWriteBatch()
+		key := fmt.Sprint(rand.Intn(N * 4))
+		val := fmt.Sprint(i)
+		wb.Set(key, val)
+		if err := c.Update(wb); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verifyOrder(t, c)
 }
 
 func TestWriteBatch2(t *testing.T) {
