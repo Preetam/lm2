@@ -252,3 +252,79 @@ func TestWriteBatch(t *testing.T) {
 		i++
 	}
 }
+
+func TestWriteBatch2(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "1"},
+		{"key2", "2"},
+		{"key3", "1"},
+	}
+
+	c, err := NewCollection("/tmp/test_writebatch2.lm2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	wb := NewWriteBatch()
+
+	wb.Set("key1", "1")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key2", "1")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key3", "1")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key2", "2")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key4", "1")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Delete("key4")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		}
+		i++
+	}
+}
