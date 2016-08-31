@@ -327,6 +327,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// TODO: assert it.
 
 	walEntry := newWALEntry()
+	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
 
 	// Append new records with the appropriate "next" pointers.
 
@@ -385,6 +386,10 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	}
 
 	// fsync data file.
+	err = c.f.Sync()
+	if err != nil {
+		return err
+	}
 
 	// Mark deleted and overwritten records as "deleted" at sentinel offset.
 	// (This happens in memory.)
@@ -415,22 +420,27 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	// ^ record changes should have been serialized + buffered. Write those entries
 	// out to the WAL.
+	c.LastCommit = currentOffset
+	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
 	logCommit, err := c.wal.Append(walEntry)
 	if err != nil {
 		return err
 	}
 
 	c.LastLogCommit = logCommit
-	walEntry = newWALEntry()
-	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
-	logCommit, err = c.wal.Append(walEntry)
-	if err != nil {
-		return err
-	}
 
 	// Update + fsync data file header.
-	c.LastCommit = currentOffset
-	c.LastLogCommit = logCommit
+
+	for _, walRec := range walEntry.records {
+		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+		if err != nil {
+			return err
+		}
+		if int64(n) != walRec.Size {
+			return errors.New("lm2: incomplete data write")
+		}
+	}
+
 	return c.f.Sync()
 }
 
