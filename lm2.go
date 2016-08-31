@@ -1,9 +1,9 @@
 package lm2
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
-	"log"
 	"math/rand"
 	"os"
 	"sort"
@@ -16,6 +16,7 @@ const cacheSize = 100000
 type Collection struct {
 	fileHeader
 	f     *os.File
+	wal   *WAL
 	cache *recordCache
 }
 
@@ -25,6 +26,12 @@ type fileHeader struct {
 	LastLogCommit int64 // Unused for now
 }
 
+func (h fileHeader) Bytes() []byte {
+	buf := bytes.NewBuffer(nil)
+	binary.Write(buf, binary.LittleEndian, h)
+	return buf.Bytes()
+}
+
 type recordHeader struct {
 	Next    int64
 	Deleted int64
@@ -32,9 +39,15 @@ type recordHeader struct {
 	ValLen  uint32
 }
 
+func (h recordHeader) Bytes() []byte {
+	buf := bytes.NewBuffer(nil)
+	binary.Write(buf, binary.LittleEndian, h)
+	return buf.Bytes()
+}
+
 type sentinelRecord struct {
-	magic  uint32 // some fixed pattern
-	offset int64  // this record's offset
+	Magic  uint32 // some fixed pattern
+	Offset int64  // this record's offset
 }
 
 type record struct {
@@ -205,37 +218,6 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 	}
 
 	rec.Offset = offset
-	c.cache.push(rec)
-
-	c.LastCommit = offset
-
-	return offset, nil
-}
-
-func (c *Collection) writeRecord2(rec *record) (int64, error) {
-	offset, err := c.f.Seek(0, 2)
-	if err != nil {
-		return 0, err
-	}
-
-	rec.KeyLen = uint16(len(rec.Key))
-	rec.ValLen = uint32(len(rec.Value))
-
-	err = binary.Write(c.f, binary.LittleEndian, rec.recordHeader)
-	if err != nil {
-		return 0, err
-	}
-
-	_, err = c.f.WriteString(rec.Key)
-	if err != nil {
-		return 0, err
-	}
-	_, err = c.f.WriteString(rec.Value)
-	if err != nil {
-		return 0, err
-	}
-
-	rec.Offset = offset
 	return offset, nil
 }
 
@@ -245,8 +227,8 @@ func (c *Collection) writeSentinel() (int64, error) {
 		return 0, err
 	}
 	sentinel := sentinelRecord{
-		magic:  sentinelMagic,
-		offset: offset,
+		Magic:  sentinelMagic,
+		Offset: offset,
 	}
 	err = binary.Write(c.f, binary.LittleEndian, sentinel)
 	if err != nil {
@@ -319,7 +301,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		keys = append(keys, key)
 		offset, err := c.findLastLessThanOrEqual(key)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		if offset > 0 {
@@ -334,7 +315,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for _, offset := range recordsToLoad {
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		c.cache.forcePush(rec)
@@ -346,6 +326,8 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// NOTE: we shouldn't be reading any more records after this point.
 	// TODO: assert it.
 
+	walEntry := newWALEntry()
+
 	// Append new records with the appropriate "next" pointers.
 
 	overwrittenRecords := []int64{}
@@ -355,7 +337,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		// Find last less than.
 		offset, err := c.findLastLessThanOrEqual(key)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		if offset == 0 {
@@ -367,16 +348,16 @@ func (c *Collection) Update(wb *WriteBatch) error {
 				Key:   key,
 				Value: value,
 			}
-			newRecordOffset, err := c.writeRecord2(rec)
+			newRecordOffset, err := c.writeRecord(rec)
 			if err != nil {
 				return err
 			}
 			c.Head = newRecordOffset
+			walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
 			continue
 		}
 		prevRec, err := c.readRecord(offset)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		rec := &record{
@@ -386,8 +367,9 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			Key:   key,
 			Value: value,
 		}
-		newRecordOffset, err := c.writeRecord2(rec)
+		newRecordOffset, err := c.writeRecord(rec)
 		prevRec.Next = newRecordOffset
+		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.Bytes()))
 		if prevRec.Key == key {
 			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 		}
@@ -414,31 +396,42 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		if rec.Deleted == 0 {
 			rec.Deleted = currentOffset
+			walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
 		}
 	}
 
 	for _, offset := range overwrittenRecords {
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			log.Println(offset)
 			return err
 		}
 		rec.Deleted = currentOffset
+		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
 	}
 
 	// ^ record changes should have been serialized + buffered. Write those entries
 	// out to the WAL.
+	logCommit, err := c.wal.Append(walEntry)
+	if err != nil {
+		return err
+	}
 
-	// fsync WAL.
+	c.LastLogCommit = logCommit
+	walEntry = newWALEntry()
+	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
+	logCommit, err = c.wal.Append(walEntry)
+	if err != nil {
+		return err
+	}
 
 	// Update + fsync data file header.
 	c.LastCommit = currentOffset
-	return nil
+	c.LastLogCommit = logCommit
+	return c.f.Sync()
 }
 
 func NewCollection(file string) (*Collection, error) {
@@ -452,8 +445,15 @@ func NewCollection(file string) (*Collection, error) {
 		return nil, err
 	}
 
+	wal, err := newWAL(file + ".wal")
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	c := &Collection{
 		f:     f,
+		wal:   wal,
 		cache: newCache(cacheSize),
 	}
 	c.cache.c = c
@@ -464,6 +464,7 @@ func NewCollection(file string) (*Collection, error) {
 	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
 	if err != nil {
 		c.f.Close()
+		c.wal.Close()
 		return nil, err
 	}
 	return c, nil
@@ -475,8 +476,15 @@ func OpenCollection(file string) (*Collection, error) {
 		return nil, err
 	}
 
+	wal, err := newWAL(file + ".wal")
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	c := &Collection{
 		f:     f,
+		wal:   wal,
 		cache: newCache(cacheSize),
 	}
 	c.cache.c = c
@@ -486,6 +494,7 @@ func OpenCollection(file string) (*Collection, error) {
 	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
 		c.f.Close()
+		c.wal.Close()
 		return nil, err
 	}
 	return c, nil
@@ -493,4 +502,5 @@ func OpenCollection(file string) (*Collection, error) {
 
 func (c *Collection) Close() {
 	c.f.Close()
+	c.wal.Close()
 }
