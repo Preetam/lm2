@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	walMagic = sentinelMagic
+	walMagic       = sentinelMagic
+	walFooterMagic = ^uint32(walMagic)
 )
 
 type WAL struct {
@@ -22,9 +23,15 @@ type walEntryHeader struct {
 	NumRecords uint32
 }
 
+type walEntryFooter struct {
+	Magic       uint32
+	StartOffset int64
+}
+
 type walEntry struct {
 	walEntryHeader
 	records []walRecord
+	walEntryFooter
 }
 
 type walRecord struct {
@@ -42,6 +49,10 @@ func newWALEntry() *walEntry {
 		walEntryHeader: walEntryHeader{
 			Magic:      sentinelMagic,
 			NumRecords: 0,
+		},
+		walEntryFooter: walEntryFooter{
+			Magic:       walFooterMagic,
+			StartOffset: 0,
 		},
 	}
 }
@@ -94,12 +105,22 @@ func newWAL(filename string) (*WAL, error) {
 }
 
 func (w *WAL) Append(entry *walEntry) (int64, error) {
+	startOffset, err := w.f.Seek(0, 2)
+	if err != nil {
+		w.Truncate()
+		return 0, errors.New("lm2: couldn't get offset")
+	}
+	entry.StartOffset = startOffset
+
 	buf := bytes.NewBuffer(nil)
 	for _, rec := range entry.records {
 		buf.Write(rec.Bytes())
 	}
 	entry.Length = int64(buf.Len())
-	err := binary.Write(w.f, binary.LittleEndian, entry.walEntryHeader)
+
+	binary.Write(buf, binary.LittleEndian, entry.walEntryFooter)
+
+	err = binary.Write(w.f, binary.LittleEndian, entry.walEntryHeader)
 	if err != nil {
 		w.Truncate()
 		return 0, err
@@ -117,7 +138,7 @@ func (w *WAL) Append(entry *walEntry) (int64, error) {
 	}
 
 	currentOffset, err := w.f.Seek(0, 2)
-	if n != buf.Len() {
+	if err != nil {
 		w.Truncate()
 		return 0, errors.New("lm2: couldn't get offset")
 	}
