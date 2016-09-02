@@ -531,7 +531,23 @@ func OpenCollection(file string) (*Collection, error) {
 
 	c.f.Truncate(c.LastCommit)
 
+	err = c.sync()
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+
 	return c, nil
+}
+
+func (c *Collection) sync() error {
+	if err := c.wal.f.Sync(); err != nil {
+		return errors.New("lm2: error syncing WAL")
+	}
+	if err := c.f.Sync(); err != nil {
+		return errors.New("lm2: error syncing data file")
+	}
+	return nil
 }
 
 func (c *Collection) Close() {
