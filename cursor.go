@@ -41,7 +41,7 @@ func (c *Cursor) Next() bool {
 	}
 	c.current = rec
 
-	for (c.current.Deleted != 0 && c.current.Deleted < c.snapshot) ||
+	for (c.current.Deleted != 0 && c.current.Deleted <= c.snapshot) ||
 		(c.current.Offset > c.snapshot) {
 		rec, err = c.collection.readRecord(c.current.Next)
 		if err != nil {

@@ -1,23 +1,35 @@
 package lm2
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"math/rand"
 	"os"
+	"sort"
 )
+
+const sentinelMagic = 0xDEAD10CC
 
 const cacheSize = 100000
 
 type Collection struct {
 	fileHeader
 	f     *os.File
+	wal   *WAL
 	cache *recordCache
 }
 
 type fileHeader struct {
-	Head       int64
-	LastCommit int64 // Unused for now
+	Head          int64
+	LastCommit    int64 // Unused for now
+	LastLogCommit int64 // Unused for now
+}
+
+func (h fileHeader) Bytes() []byte {
+	buf := bytes.NewBuffer(nil)
+	binary.Write(buf, binary.LittleEndian, h)
+	return buf.Bytes()
 }
 
 type recordHeader struct {
@@ -25,6 +37,17 @@ type recordHeader struct {
 	Deleted int64
 	KeyLen  uint16
 	ValLen  uint32
+}
+
+func (h recordHeader) Bytes() []byte {
+	buf := bytes.NewBuffer(nil)
+	binary.Write(buf, binary.LittleEndian, h)
+	return buf.Bytes()
+}
+
+type sentinelRecord struct {
+	Magic  uint32 // some fixed pattern
+	Offset int64  // this record's offset
 }
 
 type record struct {
@@ -36,9 +59,9 @@ type record struct {
 
 type recordCache struct {
 	cache        map[int64]*record
-	dirty        map[int64]bool
 	maxKeyRecord *record
 	size         int
+	preventPurge bool
 
 	c *Collection
 }
@@ -46,7 +69,6 @@ type recordCache struct {
 func newCache(size int) *recordCache {
 	return &recordCache{
 		cache:        map[int64]*record{},
-		dirty:        map[int64]bool{},
 		maxKeyRecord: nil,
 		size:         size,
 	}
@@ -80,7 +102,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 	rc.cache[rec.Offset] = rec
-	if len(rc.cache) > rc.size {
+	if len(rc.cache) > rc.size && !rc.preventPurge {
 		deletedKey := int64(0)
 		for k := range rc.cache {
 			if k == rc.maxKeyRecord.Offset {
@@ -89,18 +111,20 @@ func (rc *recordCache) push(rec *record) {
 			deletedKey = k
 			return
 		}
-		if rc.dirty[deletedKey] {
-			// This is a dirty record. Flush changes to disk.
-			rc.c.updateRecordHeader(deletedKey, rc.cache[deletedKey].recordHeader)
-			delete(rc.dirty, deletedKey)
-		}
 		delete(rc.cache, deletedKey)
 	}
 }
 
+func (rc *recordCache) forcePush(rec *record) {
+	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
+		rc.maxKeyRecord = rec
+	}
+	rc.cache[rec.Offset] = rec
+}
+
 func (c *Collection) readRecord(offset int64) (*record, error) {
 	if offset == 0 {
-		return nil, errors.New("lm2: invalid record offset")
+		return nil, errors.New("lm2: invalid record offset 0")
 	}
 
 	if rec := c.cache.cache[offset]; rec != nil {
@@ -142,7 +166,6 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 func (c *Collection) setRecordNext(offset int64, next int64) error {
 	if rec := c.cache.cache[offset]; rec != nil {
 		rec.recordHeader.Next = next
-		c.cache.dirty[offset] = true
 		return nil
 	}
 	_, err := c.f.Seek(offset, 0)
@@ -187,17 +210,28 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 	}
 
 	rec.Offset = offset
-	c.cache.push(rec)
-
-	c.LastCommit = offset
-
 	return offset, nil
+}
+
+func (c *Collection) writeSentinel() (int64, error) {
+	offset, err := c.f.Seek(0, 2)
+	if err != nil {
+		return 0, err
+	}
+	sentinel := sentinelRecord{
+		Magic:  sentinelMagic,
+		Offset: offset,
+	}
+	err = binary.Write(c.f, binary.LittleEndian, sentinel)
+	if err != nil {
+		return 0, err
+	}
+	return offset + 12, nil
 }
 
 func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
 	if rec := c.cache.cache[offset]; rec != nil {
 		rec.recordHeader = header
-		c.cache.dirty[offset] = true
 		return nil
 	}
 	_, err := c.f.Seek(offset, 0)
@@ -207,117 +241,196 @@ func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error
 	return binary.Write(c.f, binary.LittleEndian, header)
 }
 
-func (c *Collection) Set(key, value string) error {
-	// find last less than key
+func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
+	offset := int64(0)
 
-	if c.Head == 0 { // first record
-		// write new record
-		newRecordOffset, err := c.writeRecord(&record{
-			Key:   key,
-			Value: value,
-		})
-		if err != nil {
-			return err
-		}
-
-		// set head to the new record offset
-		c.fileHeader.Head = newRecordOffset
-		c.f.Seek(0, 0)
-		return binary.Write(c.f, binary.LittleEndian, c.fileHeader)
+	if c.Head == 0 {
+		// Empty collection.
+		return 0, nil
 	}
 
 	// read the head
 	rec, err := c.readRecord(c.Head)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if rec.Key > key { // we have a new head
-		// write new record
-		newRecordOffset, err := c.writeRecord(&record{
-			recordHeader: recordHeader{
-				Next: rec.Offset,
-			},
-			Key:   key,
-			Value: value,
-		})
-		if err != nil {
-			return err
-		}
-
-		// set head to the new record offset
-		c.fileHeader.Head = newRecordOffset
-		c.f.Seek(0, 0)
-		return binary.Write(c.f, binary.LittleEndian, c.fileHeader)
+		return 0, nil
 	}
 
 	cacheResult := c.cache.findLastLessThan(key)
 	if cacheResult != 0 {
 		rec, err = c.readRecord(cacheResult)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 
-	prevRec := rec
+	offset = rec.Offset
+
 	for rec != nil {
 		if rec.Key > key {
 			break
 		}
-		if rec.Key == key {
-			// Equal key. Delete because we're overwriting.
-			rec.Deleted = c.LastCommit
-			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
-			if err != nil {
-				return err
-			}
-		}
-		prevRec = rec
+		offset = rec.Offset
 		rec = c.nextRecord(rec)
 	}
 
-	// write the new record
-	newRecordOffset, err := c.writeRecord(&record{
-		recordHeader: recordHeader{
-			Next: prevRec.Next,
-		},
-		Key:   key,
-		Value: value,
-	})
-	if err != nil {
-		return err
-	}
-
-	prevRec.Next = newRecordOffset
-	return c.updateRecordHeader(prevRec.Offset, prevRec.recordHeader)
+	return offset, nil
 }
 
-func (c *Collection) Delete(key string) error {
-	// find last less than key
+// Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
+func (c *Collection) Update(wb *WriteBatch) error {
+	// Clean up WriteBatch.
+	wb.cleanup()
 
-	if c.Head == 0 { // first record
-		return nil
+	// Find and load records that will be modified into the cache.
+	recordsToLoad := []int64{}
+
+	keys := []string{}
+	for key := range wb.sets {
+		keys = append(keys, key)
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			return err
+		}
+		if offset > 0 {
+			recordsToLoad = append(recordsToLoad, offset)
+		}
 	}
 
-	// read the head
-	rec, err := c.readRecord(c.Head)
+	// Prevent cache purges.
+	c.cache.preventPurge = true
+	defer func() { c.cache.preventPurge = false }()
+
+	for _, offset := range recordsToLoad {
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			return err
+		}
+		c.cache.forcePush(rec)
+	}
+
+	// Sort keys to be inserted.
+	sort.Strings(keys)
+
+	// NOTE: we shouldn't be reading any more records after this point.
+	// TODO: assert it.
+
+	walEntry := newWALEntry()
+
+	// Append new records with the appropriate "next" pointers.
+
+	overwrittenRecords := []int64{}
+	for _, key := range keys {
+		value := wb.sets[key]
+
+		// Find last less than.
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			return err
+		}
+		if offset == 0 {
+			// Head.
+			rec := &record{
+				recordHeader: recordHeader{
+					Next: c.Head,
+				},
+				Key:   key,
+				Value: value,
+			}
+			newRecordOffset, err := c.writeRecord(rec)
+			if err != nil {
+				return err
+			}
+			c.Head = newRecordOffset
+			continue
+		}
+		prevRec, err := c.readRecord(offset)
+		if err != nil {
+			return err
+		}
+		rec := &record{
+			recordHeader: recordHeader{
+				Next: prevRec.Next,
+			},
+			Key:   key,
+			Value: value,
+		}
+		newRecordOffset, err := c.writeRecord(rec)
+		prevRec.Next = newRecordOffset
+		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.Bytes()))
+		if prevRec.Key == key {
+			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
+		}
+		c.cache.forcePush(rec)
+		c.cache.forcePush(prevRec)
+	}
+
+	// Write sentinel record.
+
+	currentOffset, err := c.writeSentinel()
 	if err != nil {
 		return err
 	}
 
-	for rec != nil {
-		if rec.Key > key {
-			break
-		}
-		if rec.Key == key && rec.Deleted == 0 {
-			rec.Deleted = 1
-			err = c.updateRecordHeader(rec.Offset, rec.recordHeader)
-			if err != nil {
-				return err
-			}
-		}
-		rec = c.nextRecord(rec)
+	// fsync data file.
+	err = c.f.Sync()
+	if err != nil {
+		return err
 	}
-	return nil
+
+	// Mark deleted and overwritten records as "deleted" at sentinel offset.
+	// (This happens in memory.)
+
+	for key := range wb.deletes {
+		offset, err := c.findLastLessThanOrEqual(key)
+		if err != nil {
+			return err
+		}
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			return err
+		}
+		if rec.Deleted == 0 {
+			rec.Deleted = currentOffset
+			walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
+		}
+	}
+
+	for _, offset := range overwrittenRecords {
+		rec, err := c.readRecord(offset)
+		if err != nil {
+			return err
+		}
+		rec.Deleted = currentOffset
+		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
+	}
+
+	// ^ record changes should have been serialized + buffered. Write those entries
+	// out to the WAL.
+	c.LastCommit = currentOffset
+	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
+	logCommit, err := c.wal.Append(walEntry)
+	if err != nil {
+		return err
+	}
+
+	c.LastLogCommit = logCommit
+
+	// Update + fsync data file header.
+
+	for _, walRec := range walEntry.records {
+		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+		if err != nil {
+			return err
+		}
+		if int64(n) != walRec.Size {
+			return errors.New("lm2: incomplete data write")
+		}
+	}
+
+	return c.f.Sync()
 }
 
 func NewCollection(file string) (*Collection, error) {
@@ -331,8 +444,15 @@ func NewCollection(file string) (*Collection, error) {
 		return nil, err
 	}
 
+	wal, err := newWAL(file + ".wal")
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	c := &Collection{
 		f:     f,
+		wal:   wal,
 		cache: newCache(cacheSize),
 	}
 	c.cache.c = c
@@ -343,6 +463,7 @@ func NewCollection(file string) (*Collection, error) {
 	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
 	if err != nil {
 		c.f.Close()
+		c.wal.Close()
 		return nil, err
 	}
 	return c, nil
@@ -354,8 +475,15 @@ func OpenCollection(file string) (*Collection, error) {
 		return nil, err
 	}
 
+	wal, err := openWAL(file + ".wal")
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	c := &Collection{
 		f:     f,
+		wal:   wal,
 		cache: newCache(cacheSize),
 	}
 	c.cache.c = c
@@ -364,12 +492,65 @@ func OpenCollection(file string) (*Collection, error) {
 	c.f.Seek(0, 0)
 	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
-		c.f.Close()
+		c.Close()
 		return nil, err
 	}
+
+	// Read last WAL entry.
+	lastEntry, err := c.wal.ReadLastEntry()
+	if err != nil {
+		// Maybe latest WAL write didn't succeed.
+		// Read the last known good one.
+		err = c.wal.SetOffset(c.LastLogCommit)
+		if err != nil {
+			// Nothing else to do. Bail out.
+			c.Close()
+			return nil, err
+		}
+		lastEntry, err = c.wal.ReadEntry()
+		if err != nil {
+			// Nothing else to do. Bail out.
+			c.Close()
+			return nil, err
+		}
+		c.wal.Truncate()
+	}
+
+	// Apply last WAL entry again.
+	for _, walRec := range lastEntry.records {
+		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
+		if int64(n) != walRec.Size {
+			c.Close()
+			return nil, errors.New("lm2: incomplete data write")
+		}
+	}
+
+	c.f.Truncate(c.LastCommit)
+
+	err = c.sync()
+	if err != nil {
+		c.Close()
+		return nil, err
+	}
+
 	return c, nil
+}
+
+func (c *Collection) sync() error {
+	if err := c.wal.f.Sync(); err != nil {
+		return errors.New("lm2: error syncing WAL")
+	}
+	if err := c.f.Sync(); err != nil {
+		return errors.New("lm2: error syncing data file")
+	}
+	return nil
 }
 
 func (c *Collection) Close() {
 	c.f.Close()
+	c.wal.Close()
 }
