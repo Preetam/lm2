@@ -196,18 +196,28 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 	rec.KeyLen = uint16(len(rec.Key))
 	rec.ValLen = uint32(len(rec.Value))
 
-	err = binary.Write(c.f, binary.LittleEndian, rec.recordHeader)
+	buf := bytes.NewBuffer(nil)
+
+	err = binary.Write(buf, binary.LittleEndian, rec.recordHeader)
 	if err != nil {
 		return 0, err
 	}
 
-	_, err = c.f.WriteString(rec.Key)
+	_, err = buf.WriteString(rec.Key)
 	if err != nil {
 		return 0, err
 	}
-	_, err = c.f.WriteString(rec.Value)
+	_, err = buf.WriteString(rec.Value)
 	if err != nil {
 		return 0, err
+	}
+
+	n, err := c.f.Write(buf.Bytes())
+	if err != nil {
+		return 0, fmt.Errorf("lm2: error writing record: %v", err)
+	}
+	if n != buf.Len() {
+		return 0, errors.New("lm2: partial write")
 	}
 
 	rec.Offset = offset
