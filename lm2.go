@@ -318,7 +318,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// TODO: assert it.
 
 	walEntry := newWALEntry()
-	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
 
 	// Append new records with the appropriate "next" pointers.
 
@@ -345,7 +344,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 				return err
 			}
 			c.Head = newRecordOffset
-			walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
 			continue
 		}
 		prevRec, err := c.readRecord(offset)
@@ -477,7 +475,7 @@ func OpenCollection(file string) (*Collection, error) {
 		return nil, err
 	}
 
-	wal, err := newWAL(file + ".wal")
+	wal, err := openWAL(file + ".wal")
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -494,10 +492,45 @@ func OpenCollection(file string) (*Collection, error) {
 	c.f.Seek(0, 0)
 	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
-		c.f.Close()
-		c.wal.Close()
+		c.Close()
 		return nil, err
 	}
+
+	// Read last WAL entry.
+	lastEntry, err := c.wal.ReadLastEntry()
+	if err != nil {
+		// Maybe latest WAL write didn't succeed.
+		// Read the last known good one.
+		err = c.wal.SetOffset(c.LastLogCommit)
+		if err != nil {
+			// Nothing else to do. Bail out.
+			c.Close()
+			return nil, err
+		}
+		lastEntry, err = c.wal.ReadEntry()
+		if err != nil {
+			// Nothing else to do. Bail out.
+			c.Close()
+			return nil, err
+		}
+		c.wal.Truncate()
+	}
+
+	// Apply last WAL entry again.
+	for _, walRec := range lastEntry.records {
+		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+		if err != nil {
+			c.Close()
+			return nil, err
+		}
+		if int64(n) != walRec.Size {
+			c.Close()
+			return nil, errors.New("lm2: incomplete data write")
+		}
+	}
+
+	c.f.Truncate(c.LastCommit)
+
 	return c, nil
 }
 

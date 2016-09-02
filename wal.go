@@ -150,7 +150,98 @@ func (w *WAL) Append(entry *walEntry) (int64, error) {
 	}
 
 	w.lastGoodOffset = currentOffset
-	return w.lastGoodOffset, nil
+	return startOffset, nil
+}
+
+func (w *WAL) ReadLastEntry() (*walEntry, error) {
+	// Read footer
+	const footerSize = 12
+	_, err := w.f.Seek(-footerSize, 2)
+	if err != nil {
+		return nil, errors.New("lm2: error seeking to WAL footer")
+	}
+	footer := walEntryFooter{}
+	err = binary.Read(w.f, binary.LittleEndian, &footer)
+	if err != nil {
+		return nil, errors.New("lm2: error reading WAL footer")
+	}
+	if footer.Magic != walFooterMagic {
+		return nil, errors.New("lm2: invalid WAL footer magic")
+	}
+
+	// Read entry.
+
+	_, err = w.f.Seek(footer.StartOffset, 0)
+	if err != nil {
+		return nil, errors.New("lm2: error seeking to WAL entry start")
+	}
+
+	return w.ReadEntry()
+}
+
+func (w *WAL) SetOffset(offset int64) error {
+	_, err := w.f.Seek(offset, 0)
+	return err
+}
+
+func (w *WAL) ReadEntry() (*walEntry, error) {
+	entry := newWALEntry()
+
+	err := binary.Read(w.f, binary.LittleEndian, &entry.walEntryHeader)
+	if err != nil {
+		return nil, errors.New("lm2: error reading WAL entry header")
+	}
+	if entry.walEntryHeader.Magic != walMagic {
+		return nil, errors.New("lm2: invalid WAL header magic")
+	}
+
+	b := make([]byte, int(entry.walEntryHeader.Length))
+	n, err := w.f.Read(b)
+	if err != nil {
+		return nil, errors.New("lm2: error reading WAL body")
+	}
+	if n != len(b) {
+		return nil, errors.New("lm2: partial read")
+	}
+
+	r := bytes.NewReader(b)
+	numRecords := int(entry.walEntryHeader.NumRecords)
+	entry.walEntryHeader.NumRecords = 0
+	for i := 0; i < numRecords; i++ {
+		recHeader := walRecordHeader{}
+		err = binary.Read(r, binary.LittleEndian, &recHeader)
+		if err != nil {
+			return nil, errors.New("lm2: error reading WAL record header")
+		}
+		walRecordBytes := make([]byte, int(recHeader.Size))
+		n, err := r.Read(walRecordBytes)
+		if err != nil {
+			return nil, errors.New("lm2: error reading WAL record body")
+		}
+		if n != len(walRecordBytes) {
+			return nil, errors.New("lm2: partial read")
+		}
+
+		entry.Push(newWALRecord(recHeader.Offset, walRecordBytes))
+	}
+
+	err = binary.Read(w.f, binary.LittleEndian, &entry.walEntryFooter)
+	if err != nil {
+		return nil, err
+	}
+
+	if entry.walEntryFooter.Magic != walFooterMagic {
+		return nil, errors.New("lm2: invalid WAL footer magic")
+	}
+
+	currentOffset, err := w.f.Seek(0, 2)
+	if err != nil {
+		return nil, errors.New("lm2: couldn't get offset")
+	}
+
+	w.lastGoodOffset = currentOffset
+
+	return entry, nil
 }
 
 func (w *WAL) Truncate() error {

@@ -356,3 +356,33 @@ func TestWriteCloseOpen(t *testing.T) {
 		i++
 	}
 }
+
+func TestReadLastEntry(t *testing.T) {
+	c, err := NewCollection("/tmp/test_readlastentry.lm2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb := NewWriteBatch()
+	wb.Set("key1", "1")
+	wb.Set("key2", "1")
+	err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	wal, err := openWAL("/tmp/test_readlastentry.lm2.wal")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := wal.ReadLastEntry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if entry.NumRecords != 2 {
+		t.Errorf("expected %d records, got %d", 2, entry.NumRecords)
+	}
+}
