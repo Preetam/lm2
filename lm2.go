@@ -509,23 +509,28 @@ func OpenCollection(file string) (*Collection, error) {
 		}
 		lastEntry, err = c.wal.ReadEntry()
 		if err != nil {
-			// Nothing else to do. Bail out.
-			c.Close()
-			return nil, err
+			if c.wal.fileSize > 0 {
+				// Nothing else to do. Bail out.
+				c.Close()
+				return nil, err
+			}
+		} else {
+			c.wal.Truncate()
 		}
-		c.wal.Truncate()
 	}
 
-	// Apply last WAL entry again.
-	for _, walRec := range lastEntry.records {
-		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
-		if err != nil {
-			c.Close()
-			return nil, err
-		}
-		if int64(n) != walRec.Size {
-			c.Close()
-			return nil, errors.New("lm2: incomplete data write")
+	if lastEntry != nil {
+		// Apply last WAL entry again.
+		for _, walRec := range lastEntry.records {
+			n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+			if err != nil {
+				c.Close()
+				return nil, err
+			}
+			if int64(n) != walRec.Size {
+				c.Close()
+				return nil, errors.New("lm2: incomplete data write")
+			}
 		}
 	}
 

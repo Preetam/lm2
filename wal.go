@@ -14,6 +14,7 @@ const (
 
 type WAL struct {
 	f              *os.File
+	fileSize       int64
 	lastGoodOffset int64
 }
 
@@ -84,8 +85,16 @@ func openWAL(filename string) (*WAL, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	stat, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
 	return &WAL{
-		f: f,
+		f:        f,
+		fileSize: stat.Size(),
 	}, nil
 }
 
