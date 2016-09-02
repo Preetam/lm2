@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/rand"
 	"os"
 	"sort"
@@ -21,9 +22,9 @@ type Collection struct {
 }
 
 type fileHeader struct {
-	Head          int64
-	LastCommit    int64 // Unused for now
-	LastLogCommit int64 // Unused for now
+	Head              int64
+	LastCommit        int64
+	LastValidLogEntry int64
 }
 
 func (h fileHeader) Bytes() []byte {
@@ -416,7 +417,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		return err
 	}
 
-	c.LastLogCommit = logCommit
+	c.LastValidLogEntry = logCommit
 
 	// Update + fsync data file header.
 
@@ -459,6 +460,7 @@ func NewCollection(file string) (*Collection, error) {
 
 	// write file header
 	c.fileHeader.Head = 0
+	c.fileHeader.LastCommit = int64(8 * 3)
 	c.f.Seek(0, 0)
 	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
 	if err != nil {
@@ -472,13 +474,13 @@ func NewCollection(file string) (*Collection, error) {
 func OpenCollection(file string) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lm2: error opening data file: %v", err)
 	}
 
 	wal, err := openWAL(file + ".wal")
 	if err != nil {
 		f.Close()
-		return nil, err
+		return nil, fmt.Errorf("lm2: error WAL: %v", err)
 	}
 
 	c := &Collection{
@@ -493,7 +495,7 @@ func OpenCollection(file string) (*Collection, error) {
 	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
 		c.Close()
-		return nil, err
+		return nil, fmt.Errorf("lm2: error reading file header: %v", err)
 	}
 
 	// Read last WAL entry.
@@ -501,7 +503,7 @@ func OpenCollection(file string) (*Collection, error) {
 	if err != nil {
 		// Maybe latest WAL write didn't succeed.
 		// Read the last known good one.
-		err = c.wal.SetOffset(c.LastLogCommit)
+		err = c.wal.SetOffset(c.LastValidLogEntry)
 		if err != nil {
 			// Nothing else to do. Bail out.
 			c.Close()

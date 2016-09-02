@@ -1,5 +1,7 @@
 package lm2
 
+import "errors"
+
 type Cursor struct {
 	collection *Collection
 	current    *record
@@ -8,6 +10,9 @@ type Cursor struct {
 }
 
 func (c *Collection) NewCursor() (*Cursor, error) {
+	if c.Head == 0 {
+		return nil, errors.New("lm2: no keys")
+	}
 	head, err := c.readRecord(c.Head)
 	if err != nil {
 		return nil, err
