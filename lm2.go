@@ -59,7 +59,6 @@ type record struct {
 
 type recordCache struct {
 	cache        map[int64]*record
-	dirty        map[int64]bool
 	maxKeyRecord *record
 	size         int
 	preventPurge bool
@@ -70,7 +69,6 @@ type recordCache struct {
 func newCache(size int) *recordCache {
 	return &recordCache{
 		cache:        map[int64]*record{},
-		dirty:        map[int64]bool{},
 		maxKeyRecord: nil,
 		size:         size,
 	}
@@ -112,11 +110,6 @@ func (rc *recordCache) push(rec *record) {
 			}
 			deletedKey = k
 			return
-		}
-		if rc.dirty[deletedKey] {
-			// This is a dirty record. Flush changes to disk.
-			rc.c.updateRecordHeader(deletedKey, rc.cache[deletedKey].recordHeader)
-			delete(rc.dirty, deletedKey)
 		}
 		delete(rc.cache, deletedKey)
 	}
@@ -173,7 +166,6 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 func (c *Collection) setRecordNext(offset int64, next int64) error {
 	if rec := c.cache.cache[offset]; rec != nil {
 		rec.recordHeader.Next = next
-		c.cache.dirty[offset] = true
 		return nil
 	}
 	_, err := c.f.Seek(offset, 0)
@@ -240,7 +232,6 @@ func (c *Collection) writeSentinel() (int64, error) {
 func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
 	if rec := c.cache.cache[offset]; rec != nil {
 		rec.recordHeader = header
-		c.cache.dirty[offset] = true
 		return nil
 	}
 	_, err := c.f.Seek(offset, 0)
