@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"sync"
 )
 
 const sentinelMagic = 0xDEAD10CC
@@ -19,6 +20,8 @@ type Collection struct {
 	f     *os.File
 	wal   *WAL
 	cache *recordCache
+
+	metaLock sync.RWMutex
 }
 
 type fileHeader struct {
@@ -40,6 +43,8 @@ type recordHeader struct {
 	ValLen  uint32
 }
 
+const recordHeaderSize = 8 + 8 + 2 + 4
+
 func (h recordHeader) Bytes() []byte {
 	buf := bytes.NewBuffer(nil)
 	binary.Write(buf, binary.LittleEndian, h)
@@ -56,6 +61,8 @@ type record struct {
 	Offset int64
 	Key    string
 	Value  string
+
+	lock sync.RWMutex
 }
 
 type recordCache struct {
@@ -63,6 +70,7 @@ type recordCache struct {
 	maxKeyRecord *record
 	size         int
 	preventPurge bool
+	lock         sync.RWMutex
 
 	c *Collection
 }
@@ -76,6 +84,9 @@ func newCache(size int) *recordCache {
 }
 
 func (rc *recordCache) findLastLessThan(key string) int64 {
+	rc.lock.RLock()
+	defer rc.lock.RUnlock()
+
 	if rc.maxKeyRecord != nil {
 		if rc.maxKeyRecord.Key < key {
 			return rc.maxKeyRecord.Offset
@@ -97,6 +108,9 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 }
 
 func (rc *recordCache) push(rec *record) {
+	rc.lock.Lock()
+	defer rc.lock.Unlock()
+
 	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
 		rc.maxKeyRecord = rec
 	} else if rand.Float32() >= 0.04 {
@@ -117,6 +131,9 @@ func (rc *recordCache) push(rec *record) {
 }
 
 func (rc *recordCache) forcePush(rec *record) {
+	rc.lock.Lock()
+	defer rc.lock.Unlock()
+
 	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
 		rc.maxKeyRecord = rec
 	}
@@ -128,25 +145,35 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 		return nil, errors.New("lm2: invalid record offset 0")
 	}
 
+	c.cache.lock.RLock()
 	if rec := c.cache.cache[offset]; rec != nil {
+		c.cache.lock.RUnlock()
 		return rec, nil
 	}
+	c.cache.lock.RUnlock()
 
-	_, err := c.f.Seek(offset, 0)
+	recordHeaderBytes := [recordHeaderSize]byte{}
+	n, err := c.f.ReadAt(recordHeaderBytes[:], offset)
 	if err != nil {
 		return nil, err
 	}
+	if n != recordHeaderSize {
+		return nil, errors.New("lm2: partial read")
+	}
 
 	header := recordHeader{}
-	err = binary.Read(c.f, binary.LittleEndian, &header)
+	err = binary.Read(bytes.NewReader(recordHeaderBytes[:]), binary.LittleEndian, &header)
 	if err != nil {
 		return nil, err
 	}
 
 	keyValBuf := make([]byte, int(header.KeyLen)+int(header.ValLen))
-	_, err = c.f.Read(keyValBuf)
+	n, err = c.f.ReadAt(keyValBuf, offset+recordHeaderSize)
 	if err != nil {
 		return nil, err
+	}
+	if n != len(keyValBuf) {
+		return nil, errors.New("lm2: partial read")
 	}
 
 	key := string(keyValBuf[:int(header.KeyLen)])
@@ -228,18 +255,6 @@ func (c *Collection) writeSentinel() (int64, error) {
 	return offset + 12, nil
 }
 
-func (c *Collection) updateRecordHeader(offset int64, header recordHeader) error {
-	if rec := c.cache.cache[offset]; rec != nil {
-		rec.recordHeader = header
-		return nil
-	}
-	_, err := c.f.Seek(offset, 0)
-	if err != nil {
-		return err
-	}
-	return binary.Write(c.f, binary.LittleEndian, header)
-}
-
 func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
 	offset := int64(0)
 
@@ -280,11 +295,14 @@ func (c *Collection) findLastLessThanOrEqual(key string) (int64, error) {
 
 // Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
 func (c *Collection) Update(wb *WriteBatch) error {
+	c.metaLock.Lock()
+	defer c.metaLock.Unlock()
+
 	// Clean up WriteBatch.
 	wb.cleanup()
 
 	// Find and load records that will be modified into the cache.
-	recordsToLoad := []int64{}
+	recordsToLoad := map[int64]struct{}{}
 
 	keys := []string{}
 	for key := range wb.sets {
@@ -294,21 +312,36 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			return err
 		}
 		if offset > 0 {
-			recordsToLoad = append(recordsToLoad, offset)
+			recordsToLoad[offset] = struct{}{}
 		}
 	}
 
 	// Prevent cache purges.
+	c.cache.lock.Lock()
 	c.cache.preventPurge = true
-	defer func() { c.cache.preventPurge = false }()
+	c.cache.lock.Unlock()
+	defer func() {
+		c.cache.lock.Lock()
+		c.cache.preventPurge = false
+		c.cache.lock.Unlock()
+	}()
 
-	for _, offset := range recordsToLoad {
+	recordsToUnlock := []*record{}
+	for offset := range recordsToLoad {
 		rec, err := c.readRecord(offset)
 		if err != nil {
 			return err
 		}
+		rec.lock.Lock()
+		recordsToUnlock = append(recordsToUnlock, rec)
 		c.cache.forcePush(rec)
 	}
+
+	defer func() {
+		for _, rec := range recordsToUnlock {
+			rec.lock.Unlock()
+		}
+	}()
 
 	// Sort keys to be inserted.
 	sort.Strings(keys)

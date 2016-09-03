@@ -3,6 +3,7 @@ package lm2
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 )
@@ -209,6 +210,45 @@ func TestWriteBatch1(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	verifyOrder(t, c)
+}
+
+func TestWriteBatch1Concurrent(t *testing.T) {
+	c, err := NewCollection("/tmp/test_writebatch1concurrent.lm2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	const N = 50
+	const NumGoroutines = 8
+
+	wg := sync.WaitGroup{}
+	wg.Add(NumGoroutines)
+
+	for i := 0; i < NumGoroutines; i++ {
+		go func() {
+			for j := 0; j < N; j++ {
+				wb := NewWriteBatch()
+				key := fmt.Sprint(rand.Intn(N * 4))
+				val := fmt.Sprint(j)
+				wb.Set(key, val)
+				if err := c.Update(wb); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wg.Done()
+		}()
+	}
+
+	verifyOrder(t, c)
+	verifyOrder(t, c)
+	verifyOrder(t, c)
+	verifyOrder(t, c)
+	verifyOrder(t, c)
+
+	wg.Wait()
+
 	verifyOrder(t, c)
 }
 

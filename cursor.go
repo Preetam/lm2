@@ -10,9 +10,13 @@ type Cursor struct {
 }
 
 func (c *Collection) NewCursor() (*Cursor, error) {
+	c.metaLock.RLock()
+	defer c.metaLock.RUnlock()
 	if c.Head == 0 {
+		c.metaLock.RUnlock()
 		return nil, errors.New("lm2: no keys")
 	}
+
 	head, err := c.readRecord(c.Head)
 	if err != nil {
 		return nil, err
@@ -39,22 +43,30 @@ func (c *Cursor) Next() bool {
 		return true
 	}
 
+	c.current.lock.RLock()
 	rec, err := c.collection.readRecord(c.current.Next)
 	if err != nil {
+		c.current.lock.RUnlock()
 		c.current = nil
 		return false
 	}
+	c.current.lock.RUnlock()
 	c.current = rec
 
+	c.current.lock.RLock()
 	for (c.current.Deleted != 0 && c.current.Deleted <= c.snapshot) ||
 		(c.current.Offset > c.snapshot) {
 		rec, err = c.collection.readRecord(c.current.Next)
 		if err != nil {
+			c.current.lock.RUnlock()
 			c.current = nil
 			return false
 		}
+		c.current.lock.RUnlock()
 		c.current = rec
+		c.current.lock.RLock()
 	}
+	c.current.lock.RUnlock()
 
 	return true
 }
