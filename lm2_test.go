@@ -223,8 +223,10 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 	const N = 50
 	const NumGoroutines = 8
 
-	wg := sync.WaitGroup{}
-	wg.Add(NumGoroutines)
+	startWG := sync.WaitGroup{}
+	endWG := sync.WaitGroup{}
+	startWG.Add(NumGoroutines)
+	endWG.Add(NumGoroutines)
 
 	for i := 0; i < NumGoroutines; i++ {
 		go func() {
@@ -236,18 +238,22 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 				if err := c.Update(wb); err != nil {
 					t.Fatal(err)
 				}
+				if j == 0 {
+					startWG.Done()
+				}
 			}
-			wg.Done()
+			endWG.Done()
 		}()
 	}
 
-	verifyOrder(t, c)
-	verifyOrder(t, c)
-	verifyOrder(t, c)
+	// Wait for them to start working.
+	startWG.Wait()
+
 	verifyOrder(t, c)
 	verifyOrder(t, c)
 
-	wg.Wait()
+	// Wait for them to end.
+	endWG.Wait()
 
 	verifyOrder(t, c)
 }

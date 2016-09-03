@@ -13,7 +13,6 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
 	if c.Head == 0 {
-		c.metaLock.RUnlock()
 		return nil, errors.New("lm2: no keys")
 	}
 
