@@ -103,7 +103,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 	rc.cache[rec.Offset] = rec
-	if len(rc.cache) > rc.size && !rc.preventPurge {
+	for len(rc.cache) > rc.size && !rc.preventPurge {
 		deletedKey := int64(0)
 		for k := range rc.cache {
 			if k == rc.maxKeyRecord.Offset {
@@ -162,18 +162,6 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	c.cache.push(rec)
 
 	return rec, nil
-}
-
-func (c *Collection) setRecordNext(offset int64, next int64) error {
-	if rec := c.cache.cache[offset]; rec != nil {
-		rec.recordHeader.Next = next
-		return nil
-	}
-	_, err := c.f.Seek(offset, 0)
-	if err != nil {
-		return err
-	}
-	return binary.Write(c.f, binary.LittleEndian, next)
 }
 
 func (c *Collection) nextRecord(rec *record) *record {
