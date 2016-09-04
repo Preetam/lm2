@@ -15,6 +15,10 @@ import (
 
 const sentinelMagic = 0xDEAD10CC
 
+var (
+	ErrIsNotExist = errors.New("lm2: does not exist")
+)
+
 type Collection struct {
 	fileHeader
 	f     *os.File
@@ -617,6 +621,9 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrIsNotExist
+		}
 		return nil, fmt.Errorf("lm2: error opening data file: %v", err)
 	}
 
