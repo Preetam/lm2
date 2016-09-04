@@ -12,7 +12,7 @@ const (
 	walFooterMagic = ^uint32(walMagic)
 )
 
-type WAL struct {
+type wal struct {
 	f              *os.File
 	fileSize       int64
 	lastGoodOffset int64
@@ -80,7 +80,7 @@ func (e *walEntry) Push(rec walRecord) {
 	e.NumRecords++
 }
 
-func openWAL(filename string) (*WAL, error) {
+func openWAL(filename string) (*wal, error) {
 	f, err := os.OpenFile(filename, os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -92,13 +92,13 @@ func openWAL(filename string) (*WAL, error) {
 		return nil, err
 	}
 
-	return &WAL{
+	return &wal{
 		f:        f,
 		fileSize: stat.Size(),
 	}, nil
 }
 
-func newWAL(filename string) (*WAL, error) {
+func newWAL(filename string) (*wal, error) {
 	f, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -108,12 +108,12 @@ func newWAL(filename string) (*WAL, error) {
 		f.Close()
 		return nil, err
 	}
-	return &WAL{
+	return &wal{
 		f: f,
 	}, nil
 }
 
-func (w *WAL) Append(entry *walEntry) (int64, error) {
+func (w *wal) Append(entry *walEntry) (int64, error) {
 	startOffset, err := w.f.Seek(0, 2)
 	if err != nil {
 		w.Truncate()
@@ -162,7 +162,7 @@ func (w *WAL) Append(entry *walEntry) (int64, error) {
 	return startOffset, nil
 }
 
-func (w *WAL) ReadLastEntry() (*walEntry, error) {
+func (w *wal) ReadLastEntry() (*walEntry, error) {
 	// Read footer
 	const footerSize = 12
 	_, err := w.f.Seek(-footerSize, 2)
@@ -188,12 +188,12 @@ func (w *WAL) ReadLastEntry() (*walEntry, error) {
 	return w.ReadEntry()
 }
 
-func (w *WAL) SetOffset(offset int64) error {
+func (w *wal) SetOffset(offset int64) error {
 	_, err := w.f.Seek(offset, 0)
 	return err
 }
 
-func (w *WAL) ReadEntry() (*walEntry, error) {
+func (w *wal) ReadEntry() (*walEntry, error) {
 	entry := newWALEntry()
 
 	err := binary.Read(w.f, binary.LittleEndian, &entry.walEntryHeader)
@@ -253,10 +253,10 @@ func (w *WAL) ReadEntry() (*walEntry, error) {
 	return entry, nil
 }
 
-func (w *WAL) Truncate() error {
+func (w *wal) Truncate() error {
 	return w.f.Truncate(w.lastGoodOffset)
 }
 
-func (w *WAL) Close() {
+func (w *wal) Close() {
 	w.f.Close()
 }

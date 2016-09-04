@@ -22,7 +22,7 @@ var (
 type Collection struct {
 	fileHeader
 	f     *os.File
-	wal   *WAL
+	wal   *wal
 	cache *recordCache
 
 	metaLock sync.RWMutex
