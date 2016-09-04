@@ -25,7 +25,7 @@ func verifyOrder(t *testing.T, c *Collection) int {
 }
 
 func TestCopy(t *testing.T) {
-	c, err := NewCollection("/tmp/test_copy.lm2")
+	c, err := NewCollection("/tmp/test_copy.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestCopy(t *testing.T) {
 	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
 	verifyOrder(t, c)
 
-	c2, err := NewCollection("/tmp/test_copy_copy.lm2")
+	c2, err := NewCollection("/tmp/test_copy_copy.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestWriteBatch(t *testing.T) {
 		{"key4", "4"},
 	}
 
-	c, err := NewCollection("/tmp/test_writebatch.lm2")
+	c, err := NewCollection("/tmp/test_writebatch.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestWriteBatch(t *testing.T) {
 }
 
 func TestWriteBatch1(t *testing.T) {
-	c, err := NewCollection("/tmp/test_writebatch1.lm2")
+	c, err := NewCollection("/tmp/test_writebatch1.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestWriteBatch1(t *testing.T) {
 }
 
 func TestWriteBatch1Concurrent(t *testing.T) {
-	c, err := NewCollection("/tmp/test_writebatch1concurrent.lm2")
+	c, err := NewCollection("/tmp/test_writebatch1concurrent.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestWriteBatch2(t *testing.T) {
 		{"key3", "1"},
 	}
 
-	c, err := NewCollection("/tmp/test_writebatch2.lm2")
+	c, err := NewCollection("/tmp/test_writebatch2.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestWriteCloseOpen(t *testing.T) {
 		{"key3", "1"},
 	}
 
-	c, err := NewCollection("/tmp/test_writecloseopen.lm2")
+	c, err := NewCollection("/tmp/test_writecloseopen.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestWriteCloseOpen(t *testing.T) {
 
 	c.Close()
 
-	c, err = OpenCollection("/tmp/test_writecloseopen.lm2")
+	c, err = OpenCollection("/tmp/test_writecloseopen.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestWriteCloseOpen(t *testing.T) {
 }
 
 func TestReadLastEntry(t *testing.T) {
-	c, err := NewCollection("/tmp/test_readlastentry.lm2")
+	c, err := NewCollection("/tmp/test_readlastentry.lm2", 100)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
 	"sort"
@@ -15,8 +14,6 @@ import (
 )
 
 const sentinelMagic = 0xDEAD10CC
-
-const cacheSize = 100000
 
 type Collection struct {
 	fileHeader
@@ -401,7 +398,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	// Find and load records that will be modified into the cache.
 	recordsToLoad := map[int64]struct{}{}
-	start := time.Now()
 	keys := []string{}
 	lastLessThanOrEqualCache := map[string]int64{}
 
@@ -414,9 +410,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	startingOffset := int64(0)
 	for _, key := range keys {
-		//findStart := time.Now()
 		offset, err := c.findLastLessThanOrEqual(key, startingOffset)
-		//log.Println("=== time to find last less than or equal:", time.Now().Sub(findStart))
 		if err != nil {
 			return err
 		}
@@ -426,7 +420,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			startingOffset = offset
 		}
 	}
-	log.Println("== time to load required records:", time.Now().Sub(start))
 
 	// Prevent cache purges.
 	c.cache.lock.Lock()
@@ -450,7 +443,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		recordsToUnlock = append(recordsToUnlock, rec)
 		c.cache.forcePush(rec)
 	}
-	////log.Println("== time to read records:", time.Now().Sub(start))
 
 	defer func() {
 		for _, rec := range recordsToUnlock {
@@ -512,7 +504,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		c.cache.forcePush(rec)
 		c.cache.forcePush(prevRec)
 	}
-	////log.Println("== time to append records:", time.Now().Sub(start))
 
 	// Write sentinel record.
 
@@ -580,7 +571,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	return c.f.Sync()
 }
 
-func NewCollection(file string) (*Collection, error) {
+func NewCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
@@ -623,7 +614,7 @@ func NewCollection(file string) (*Collection, error) {
 	return c, nil
 }
 
-func OpenCollection(file string) (*Collection, error) {
+func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("lm2: error opening data file: %v", err)

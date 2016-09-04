@@ -19,7 +19,7 @@ func main() {
 	flag.Parse()
 
 	if *cmd == "create" {
-		c, err := lm2.NewCollection(*filename)
+		c, err := lm2.NewCollection(*filename, 100)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -27,7 +27,7 @@ func main() {
 		return
 	}
 
-	c, err := lm2.OpenCollection(*filename)
+	c, err := lm2.OpenCollection(*filename, 100)
 	if err != nil {
 		log.Fatal(err)
 	}
