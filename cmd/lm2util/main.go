@@ -15,6 +15,7 @@ func main() {
 	key := flag.String("key", "", "key to get or set")
 	value := flag.String("value", "", "value of key to set")
 	endKey := flag.String("end-key", "", "end range of scan")
+	limit := flag.Int("limit", 0, "max number of entries to return in a scan")
 	flag.Parse()
 
 	if *cmd == "create" {
@@ -51,11 +52,12 @@ func main() {
 			log.Fatal(err)
 		}
 		cur.Seek(*key)
-		for cur.Next() {
+		for cur.Next() && *limit > 0 {
 			if cur.Key() > *endKey {
 				break
 			}
 			fmt.Println(cur.Key(), "=>", cur.Value())
+			*limit--
 		}
 	case "set":
 		wb := lm2.NewWriteBatch()
