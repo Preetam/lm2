@@ -177,7 +177,7 @@ func (rc *recordCache) push(rec *record) {
 
 	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
 		rc.maxKeyRecord = rec
-	} else if rand.Float32() >= 0.01 {
+	} else if len(rc.cache) == rc.size && rand.Float32() >= 0.01 {
 		return
 	}
 	rc.cache[rec.Offset] = rec
@@ -436,7 +436,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		c.cache.lock.Unlock()
 	}()
 
-	//start = time.Now()
 	recordsToUnlock := []*record{}
 	for offset := range recordsToLoad {
 		rec, err := c.readRecord(offset)
@@ -460,7 +459,6 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	walEntry := newWALEntry()
 
 	// Append new records with the appropriate "next" pointers.
-	//start = time.Now()
 	overwrittenRecords := []int64{}
 	startingOffset = int64(0)
 	for _, key := range keys {
