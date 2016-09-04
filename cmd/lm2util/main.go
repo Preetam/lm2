@@ -52,12 +52,13 @@ func main() {
 			log.Fatal(err)
 		}
 		cur.Seek(*key)
-		for cur.Next() && *limit > 0 {
+		remaining := *limit
+		for cur.Next() && (*limit == 0 || remaining > 0) {
 			if cur.Key() > *endKey {
 				break
 			}
 			fmt.Println(cur.Key(), "=>", cur.Value())
-			*limit--
+			remaining--
 		}
 	case "set":
 		wb := lm2.NewWriteBatch()
