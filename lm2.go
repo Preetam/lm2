@@ -576,7 +576,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	return c.f.Sync()
 }
 
-// OpenCollection creates a new collection with a data file at file.
+// NewCollection creates a new collection with a data file at file.
 // cacheSize represents the size of the collection cache.
 func NewCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
