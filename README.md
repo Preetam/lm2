@@ -1,4 +1,4 @@
-lm2 [![CircleCI](https://circleci.com/gh/Preetam/lm2.svg?style=svg&circle-token=bcee812ab7d8cd6d1fc8582644214fd06201908b)](https://circleci.com/gh/Preetam/lm2) [![GoDoc](https://godoc.org/github.com/Preetam/lm2?status.svg)](https://godoc.org/github.com/Preetam/lm2)
+lm2 [![CircleCI](https://circleci.com/gh/Preetam/lm2/tree/master.svg?style=svg&circle-token=6cf313cbc68be74cb6c8aebcef157cfbd05e54e3)](https://circleci.com/gh/Preetam/lm2/tree/master) [![GoDoc](https://godoc.org/github.com/Preetam/lm2?status.svg)](https://godoc.org/github.com/Preetam/lm2)
 ===
 lm2 (listmap2) is an ordered key-value storage library.
 
