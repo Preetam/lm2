@@ -16,9 +16,12 @@ import (
 const sentinelMagic = 0xDEAD10CC
 
 var (
-	ErrIsNotExist = errors.New("lm2: does not exist")
+	// ErrDoesNotExist is returned when a collection's data file
+	// doesn't exist.
+	ErrDoesNotExist = errors.New("lm2: does not exist")
 )
 
+// Collection represents an ordered linked list map.
 type Collection struct {
 	fileHeader
 	f     *os.File
@@ -34,7 +37,7 @@ type fileHeader struct {
 	LastValidLogEntry int64
 }
 
-func (h fileHeader) Bytes() []byte {
+func (h fileHeader) bytes() []byte {
 	buf := bytes.NewBuffer(nil)
 	binary.Write(buf, binary.LittleEndian, h)
 	return buf.Bytes()
@@ -49,7 +52,7 @@ type recordHeader struct {
 
 const recordHeaderSize = 8 + 8 + 2 + 4
 
-func (h recordHeader) Bytes() []byte {
+func (h recordHeader) bytes() []byte {
 	buf := bytes.NewBuffer(nil)
 	binary.Write(buf, binary.LittleEndian, h)
 	return buf.Bytes()
@@ -499,7 +502,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		newRecordOffset, err := c.writeRecord(rec)
 		prevRec.Next = newRecordOffset
-		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.Bytes()))
+		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 		if prevRec.Key == key {
 			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 		}
@@ -534,7 +537,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		if rec.Deleted == 0 {
 			rec.Deleted = currentOffset
-			walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
+			walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
 		}
 	}
 
@@ -544,13 +547,13 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			return err
 		}
 		rec.Deleted = currentOffset
-		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.Bytes()))
+		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
 	}
 
 	// ^ record changes should have been serialized + buffered. Write those entries
 	// out to the WAL.
 	c.LastCommit = currentOffset
-	walEntry.Push(newWALRecord(0, c.fileHeader.Bytes()))
+	walEntry.Push(newWALRecord(0, c.fileHeader.bytes()))
 	logCommit, err := c.wal.Append(walEntry)
 	if err != nil {
 		return err
@@ -573,6 +576,8 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	return c.f.Sync()
 }
 
+// OpenCollection creates a new collection with a data file at file.
+// cacheSize represents the size of the collection cache.
 func NewCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
@@ -616,11 +621,14 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 	return c, nil
 }
 
+// OpenCollection opens a collection with a data file at file.
+// cacheSize represents the size of the collection cache.
+// ErrDoesNotExist is returned if file does not exist.
 func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, ErrIsNotExist
+			return nil, ErrDoesNotExist
 		}
 		return nil, fmt.Errorf("lm2: error opening data file: %v", err)
 	}
@@ -714,6 +722,7 @@ func (c *Collection) sync() error {
 	return nil
 }
 
+// Close closes a collection and all of its resources.
 func (c *Collection) Close() {
 	c.f.Close()
 	c.wal.Close()
