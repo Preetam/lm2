@@ -1,21 +1,16 @@
-lm2
+lm2 [![CircleCI](https://circleci.com/gh/Preetam/lm2.svg?style=svg&circle-token=bcee812ab7d8cd6d1fc8582644214fd06201908b)](https://circleci.com/gh/Preetam/lm2) [![GoDoc](https://godoc.org/github.com/Preetam/lm2?status.svg)](https://godoc.org/github.com/Preetam/lm2)
 ===
 lm2 (listmap2) is an ordered key-value storage library.
 
-It is still a work in progress.
+It provides
 
-Some interesting links:
+* Ordered key-value data model
+* Append-only modifications
+* Fully durable, atomic writes
+* Cursors with snapshot reads
 
-* [Unrolled linked list][unrolled linked list]
-* [Skip list][skip list]
-* [listmap][listmap]
-	* lm2 is an evolution of this project (hence the name)
-* [vlmap][vlmap]
-
-[unrolled linked list]: https://en.wikipedia.org/wiki/Unrolled_linked_list
-[skip list]: https://en.wikipedia.org/wiki/Skip_list
-[listmap]: https://github.com/Preetam/listmap
-[vlmap]: https://github.com/Preetam/vlmap
+Because it is append-only, records are never actually deleted.
+You will have to rewrite a collection to reclaim space.
 
 License
 ---
