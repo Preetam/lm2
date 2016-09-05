@@ -54,7 +54,7 @@ func main() {
 		cur.Seek(*key)
 		remaining := *limit
 		for cur.Next() && (*limit == 0 || remaining > 0) {
-			if cur.Key() > *endKey {
+			if cur.Key() > *endKey && *endKey != "" {
 				break
 			}
 			fmt.Println(cur.Key(), "=>", cur.Value())
