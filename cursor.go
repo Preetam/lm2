@@ -117,15 +117,20 @@ func (c *Cursor) Seek(key string) {
 	}
 	c.current = rec
 	c.first = true
-	for ; rec != nil; rec = c.collection.nextRecord(rec) {
+	for rec != nil {
+		rec.lock.RLock()
 		if rec.Key > key {
 			break
 		}
 		if (rec.Deleted > 0 && rec.Deleted < c.snapshot) || (c.current.Offset > c.snapshot) {
+			rec.lock.RUnlock()
 			continue
 		}
 		if rec.Key <= key {
 			c.current = rec
 		}
+		oldRec := rec
+		rec = c.collection.nextRecord(rec)
+		oldRec.lock.RUnlock()
 	}
 }

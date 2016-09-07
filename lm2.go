@@ -385,11 +385,15 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64) (
 
 	for rec != nil {
 		c.cache.push(rec)
+		rec.lock.RLock()
 		if rec.Key > key {
+			rec.lock.RUnlock()
 			break
 		}
 		offset = rec.Offset
-		rec = c.nextRecord(rec)
+		oldRec := rec
+		rec = c.nextRecord(oldRec)
+		oldRec.lock.RUnlock()
 	}
 
 	return offset, nil
@@ -404,11 +408,21 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	wb.cleanup()
 
 	// Find and load records that will be modified into the cache.
+
+	mergedSetDeleteKeys := map[string]struct{}{}
+
+	for key := range wb.sets {
+		mergedSetDeleteKeys[key] = struct{}{}
+	}
+	for key := range wb.deletes {
+		mergedSetDeleteKeys[key] = struct{}{}
+	}
+
 	recordsToLoad := map[int64]struct{}{}
 	keys := []string{}
 	lastLessThanOrEqualCache := map[string]int64{}
 
-	for key := range wb.sets {
+	for key := range mergedSetDeleteKeys {
 		keys = append(keys, key)
 	}
 
@@ -423,9 +437,9 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		if offset > 0 {
 			recordsToLoad[offset] = struct{}{}
-			lastLessThanOrEqualCache[key] = offset
 			startingOffset = offset
 		}
+		lastLessThanOrEqualCache[key] = offset
 	}
 
 	// Prevent cache purges.
@@ -463,16 +477,27 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	// Append new records with the appropriate "next" pointers.
 	overwrittenRecords := []int64{}
-	startingOffset = int64(0)
+	newlyInserted := map[string]int64{}
 	for _, key := range keys {
-		value := wb.sets[key]
+		value, ok := wb.sets[key]
+		if !ok {
+			// Key is part of a delete.
+			continue
+		}
 
 		// Find last less than.
-		offset, err := c.findLastLessThanOrEqual(key, startingOffset)
-		if err != nil {
-			return err
+		offset := lastLessThanOrEqualCache[key]
+		if offset == 0 {
+			maxLessThan := ""
+			for newlyInsertedKey := range newlyInserted {
+				if newlyInsertedKey <= key && newlyInsertedKey > maxLessThan {
+					maxLessThan = newlyInsertedKey
+				}
+			}
+			if maxLessThan != "" {
+				offset = newlyInserted[maxLessThan]
+			}
 		}
-		startingOffset = offset
 		if offset == 0 {
 			// Head.
 			rec := &record{
@@ -487,11 +512,27 @@ func (c *Collection) Update(wb *WriteBatch) error {
 				return err
 			}
 			c.Head = newRecordOffset
+			newlyInserted[key] = newRecordOffset
 			continue
 		}
 		prevRec, err := c.readRecord(offset)
 		if err != nil {
 			return err
+		}
+		{
+			maxLessThan := ""
+			for newlyInsertedKey := range newlyInserted {
+				if newlyInsertedKey <= key && newlyInsertedKey >= prevRec.Key &&
+					newlyInsertedKey > maxLessThan {
+					maxLessThan = newlyInsertedKey
+				}
+			}
+			if maxLessThan != "" {
+				prevRec, err = c.readRecord(newlyInserted[maxLessThan])
+				if err != nil {
+					return err
+				}
+			}
 		}
 		rec := &record{
 			recordHeader: recordHeader{
@@ -501,6 +542,10 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			Value: value,
 		}
 		newRecordOffset, err := c.writeRecord(rec)
+		if err != nil {
+			return err
+		}
+		newlyInserted[key] = newRecordOffset
 		prevRec.Next = newRecordOffset
 		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 		if prevRec.Key == key {
@@ -527,10 +572,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	// (This happens in memory.)
 
 	for key := range wb.deletes {
-		offset, err := c.findLastLessThanOrEqual(key, 0)
-		if err != nil {
-			return err
-		}
+		offset := lastLessThanOrEqualCache[key]
 		rec, err := c.readRecord(offset)
 		if err != nil {
 			return err
