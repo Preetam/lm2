@@ -63,14 +63,14 @@ func main() {
 	case "set":
 		wb := lm2.NewWriteBatch()
 		wb.Set(*key, *value)
-		err = c.Update(wb)
+		_, err = c.Update(wb)
 		if err != nil {
 			log.Fatal(err)
 		}
 	case "delete":
 		wb := lm2.NewWriteBatch()
 		wb.Delete(*key)
-		err = c.Update(wb)
+		_, err = c.Update(wb)
 		if err != nil {
 			log.Fatal(err)
 		}
