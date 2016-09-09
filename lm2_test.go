@@ -40,7 +40,7 @@ func TestCopy(t *testing.T) {
 		val := fmt.Sprint(i)
 		wb := NewWriteBatch()
 		wb.Set(key, val)
-		if err := c.Update(wb); err != nil {
+		if _, err := c.Update(wb); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -75,7 +75,7 @@ func TestCopy(t *testing.T) {
 		remaining--
 
 		if remaining == 0 {
-			err := c2.Update(wb)
+			_, err := c2.Update(wb)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func TestCopy(t *testing.T) {
 	}
 
 	if remaining < batchSize {
-		err := c2.Update(wb)
+		_, err := c2.Update(wb)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func TestWriteBatch(t *testing.T) {
 	wb.Set("key3", "3")
 	wb.Set("key4", "4")
 
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestWriteBatch(t *testing.T) {
 	wb.Set("key3", "7")
 	wb.Set("key4", "8")
 
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestWriteBatch1(t *testing.T) {
 		key := fmt.Sprint(rand.Intn(N * 4))
 		val := fmt.Sprint(i)
 		wb.Set(key, val)
-		if err := c.Update(wb); err != nil {
+		if _, err := c.Update(wb); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -235,7 +235,7 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 				key := fmt.Sprint(rand.Intn(N * 4))
 				val := fmt.Sprint(j)
 				wb.Set(key, val)
-				if err := c.Update(wb); err != nil {
+				if _, err := c.Update(wb); err != nil {
 					t.Fatal(err)
 				}
 				if j == 0 {
@@ -274,42 +274,42 @@ func TestWriteBatch2(t *testing.T) {
 	wb := NewWriteBatch()
 
 	wb.Set("key1", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Set("key2", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Set("key3", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Set("key2", "2")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Set("key4", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Delete("key4")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestWriteCloseOpen(t *testing.T) {
 	wb := NewWriteBatch()
 	wb.Set("key1", "1")
 	wb.Set("key2", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,21 +357,21 @@ func TestWriteCloseOpen(t *testing.T) {
 	wb = NewWriteBatch()
 	wb.Set("key3", "1")
 	wb.Set("key2", "2")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Set("key4", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	wb = NewWriteBatch()
 	wb.Delete("key4")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestReadLastEntry(t *testing.T) {
 	wb := NewWriteBatch()
 	wb.Set("key1", "1")
 	wb.Set("key2", "1")
-	err = c.Update(wb)
+	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -400,7 +400,8 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64) (
 }
 
 // Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
-func (c *Collection) Update(wb *WriteBatch) error {
+// It returns the new version (on success) and an error.
+func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 
@@ -433,7 +434,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for _, key := range keys {
 		offset, err := c.findLastLessThanOrEqual(key, startingOffset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if offset > 0 {
 			recordsToLoad[offset] = struct{}{}
@@ -457,7 +458,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for offset := range recordsToLoad {
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		rec.lock.Lock()
 		recordsToUnlock = append(recordsToUnlock, rec)
@@ -509,7 +510,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			}
 			newRecordOffset, err := c.writeRecord(rec)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			c.Head = newRecordOffset
 			newlyInserted[key] = newRecordOffset
@@ -517,7 +518,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		prevRec, err := c.readRecord(offset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		{
 			maxLessThan := ""
@@ -530,7 +531,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 			if maxLessThan != "" {
 				prevRec, err = c.readRecord(newlyInserted[maxLessThan])
 				if err != nil {
-					return err
+					return 0, err
 				}
 			}
 		}
@@ -543,7 +544,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		}
 		newRecordOffset, err := c.writeRecord(rec)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		newlyInserted[key] = newRecordOffset
 		prevRec.Next = newRecordOffset
@@ -559,13 +560,13 @@ func (c *Collection) Update(wb *WriteBatch) error {
 
 	currentOffset, err := c.writeSentinel()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// fsync data file.
 	err = c.f.Sync()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Mark deleted and overwritten records as "deleted" at sentinel offset.
@@ -575,7 +576,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 		offset := lastLessThanOrEqualCache[key]
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if rec.Deleted == 0 {
 			rec.Deleted = currentOffset
@@ -586,7 +587,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for _, offset := range overwrittenRecords {
 		rec, err := c.readRecord(offset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		rec.Deleted = currentOffset
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
@@ -598,7 +599,7 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	walEntry.Push(newWALRecord(0, c.fileHeader.bytes()))
 	logCommit, err := c.wal.Append(walEntry)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	c.LastValidLogEntry = logCommit
@@ -608,14 +609,14 @@ func (c *Collection) Update(wb *WriteBatch) error {
 	for _, walRec := range walEntry.records {
 		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if int64(n) != walRec.Size {
-			return errors.New("lm2: incomplete data write")
+			return 0, errors.New("lm2: incomplete data write")
 		}
 	}
 
-	return c.f.Sync()
+	return c.LastCommit, c.f.Sync()
 }
 
 // NewCollection creates a new collection with a data file at file.
@@ -769,4 +770,11 @@ func (c *Collection) Close() {
 	c.f.Close()
 	c.wal.Close()
 	c.cache.close()
+}
+
+// Version returns the last committed version.
+func (c *Collection) Version() int64 {
+	c.metaLock.RLock()
+	defer c.metaLock.RUnlock()
+	return c.LastCommit
 }
