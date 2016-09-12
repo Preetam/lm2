@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"time"
 )
 
 const sentinelMagic = 0xDEAD10CC
@@ -73,12 +72,12 @@ type record struct {
 }
 
 type recordCache struct {
-	cache        map[int64]*record
-	maxKeyRecord *record
-	size         int
-	preventPurge bool
-	lock         sync.RWMutex
-	lastSave     time.Time
+	cache            map[int64]*record
+	maxKeyRecord     *record
+	size             int
+	preventPurge     bool
+	lock             sync.RWMutex
+	updatesSinceSave int
 
 	f *os.File
 
@@ -184,6 +183,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 	rc.cache[rec.Offset] = rec
+	rc.updatesSinceSave++
 	if !rc.preventPurge {
 		rc.purge()
 	}
@@ -200,7 +200,7 @@ func (rc *recordCache) save() {
 	}
 	rc.f.Write(b.Bytes())
 	rc.f.Sync()
-	rc.lastSave = time.Now()
+	rc.updatesSinceSave = 0
 }
 
 func (rc *recordCache) purge() {
@@ -217,7 +217,7 @@ func (rc *recordCache) purge() {
 		delete(rc.cache, deletedKey)
 		purged++
 	}
-	if time.Now().Sub(rc.lastSave) > time.Second {
+	if rc.updatesSinceSave > 4*rc.size {
 		rc.save()
 	}
 }
@@ -329,6 +329,28 @@ func (c *Collection) writeRecord(rec *record) (int64, error) {
 
 	rec.Offset = offset
 	return offset, nil
+}
+
+func writeRecord2(rec *record, currentOffset int64, buf *bytes.Buffer) error {
+	rec.KeyLen = uint16(len(rec.Key))
+	rec.ValLen = uint32(len(rec.Value))
+
+	err := binary.Write(buf, binary.LittleEndian, rec.recordHeader)
+	if err != nil {
+		return err
+	}
+
+	_, err = buf.WriteString(rec.Key)
+	if err != nil {
+		return err
+	}
+	_, err = buf.WriteString(rec.Value)
+	if err != nil {
+		return err
+	}
+
+	rec.Offset = currentOffset
+	return nil
 }
 
 func (c *Collection) writeSentinel() (int64, error) {
@@ -479,6 +501,11 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	// Append new records with the appropriate "next" pointers.
 	overwrittenRecords := []int64{}
 	newlyInserted := map[string]int64{}
+	appendBuf := bytes.NewBuffer(nil)
+	currentOffset, err := c.f.Seek(0, 2)
+	if err != nil {
+		return 0, errors.New("lm2: couldn't get current file offset")
+	}
 	for _, key := range keys {
 		value, ok := wb.sets[key]
 		if !ok {
@@ -508,11 +535,13 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				Key:   key,
 				Value: value,
 			}
-			newRecordOffset, err := c.writeRecord(rec)
+			newRecordOffset := currentOffset + int64(appendBuf.Len())
+			err = writeRecord2(rec, newRecordOffset, appendBuf)
 			if err != nil {
 				return 0, err
 			}
 			c.Head = newRecordOffset
+			c.cache.forcePush(rec)
 			newlyInserted[key] = newRecordOffset
 			continue
 		}
@@ -542,11 +571,13 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			Key:   key,
 			Value: value,
 		}
-		newRecordOffset, err := c.writeRecord(rec)
+		newRecordOffset := currentOffset + int64(appendBuf.Len())
+		err = writeRecord2(rec, newRecordOffset, appendBuf)
 		if err != nil {
 			return 0, err
 		}
 		newlyInserted[key] = newRecordOffset
+		c.cache.forcePush(rec)
 		prevRec.Next = newRecordOffset
 		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 		if prevRec.Key == key {
@@ -555,10 +586,17 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		c.cache.forcePush(rec)
 		c.cache.forcePush(prevRec)
 	}
+	n, err := c.f.Write(appendBuf.Bytes())
+	if err != nil {
+		return 0, errors.New("lm2: appending records failed")
+	}
+	if n != appendBuf.Len() {
+		return 0, errors.New("lm2: partial write")
+	}
 
 	// Write sentinel record.
 
-	currentOffset, err := c.writeSentinel()
+	currentOffset, err = c.writeSentinel()
 	if err != nil {
 		return 0, err
 	}
