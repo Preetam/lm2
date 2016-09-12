@@ -2,6 +2,7 @@ package lm2
 
 import "sync/atomic"
 
+// Stats holds collection statistics.
 type Stats struct {
 	RecordsWritten uint64
 	RecordsRead    uint64
