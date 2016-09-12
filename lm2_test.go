@@ -105,6 +105,8 @@ func TestCopy(t *testing.T) {
 	if count1 != count2 || count1 != N {
 		t.Errorf("incorrect count. N = %d, count1 = %d, count2 = %d", N, count1, count2)
 	}
+	t.Logf("%+v", c.Stats())
+	t.Logf("%+v", c2.Stats())
 }
 
 func TestWriteBatch(t *testing.T) {
@@ -332,6 +334,7 @@ func TestWriteBatch2(t *testing.T) {
 		}
 		i++
 	}
+	t.Logf("%+v", c.Stats())
 }
 
 func TestWriteCloseOpen(t *testing.T) {
@@ -401,6 +404,7 @@ func TestWriteCloseOpen(t *testing.T) {
 		}
 		i++
 	}
+	t.Logf("%+v", c.Stats())
 }
 
 func TestReadLastEntry(t *testing.T) {
@@ -431,4 +435,5 @@ func TestReadLastEntry(t *testing.T) {
 	if entry.NumRecords != 2 {
 		t.Errorf("expected %d records, got %d", 2, entry.NumRecords)
 	}
+	t.Logf("%+v", c.Stats())
 }

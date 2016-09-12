@@ -26,6 +26,7 @@ type Collection struct {
 	f     *os.File
 	wal   *wal
 	cache *recordCache
+	stats Stats
 
 	metaLock sync.RWMutex
 }
@@ -240,6 +241,8 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	c.cache.lock.RLock()
 	if rec := c.cache.cache[offset]; rec != nil {
 		c.cache.lock.RUnlock()
+		c.stats.incRecordsRead(1)
+		c.stats.incCacheHits(1)
 		return rec, nil
 	}
 	c.cache.lock.RUnlock()
@@ -277,6 +280,8 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 		Key:          key,
 		Value:        value,
 	}
+	c.stats.incRecordsRead(1)
+	c.stats.incCacheMisses(1)
 
 	c.cache.push(rec)
 
@@ -654,6 +659,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 	}
 
+	c.stats.incRecordsWritten(uint64(len(newlyInserted)))
 	return c.LastCommit, c.f.Sync()
 }
 
@@ -815,4 +821,9 @@ func (c *Collection) Version() int64 {
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
 	return c.LastCommit
+}
+
+// Stats returns collection statistics.
+func (c *Collection) Stats() Stats {
+	return c.stats.clone()
 }
