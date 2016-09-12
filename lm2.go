@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"time"
 )
 
 const sentinelMagic = 0xDEAD10CC
@@ -73,12 +72,12 @@ type record struct {
 }
 
 type recordCache struct {
-	cache        map[int64]*record
-	maxKeyRecord *record
-	size         int
-	preventPurge bool
-	lock         sync.RWMutex
-	lastSave     time.Time
+	cache            map[int64]*record
+	maxKeyRecord     *record
+	size             int
+	preventPurge     bool
+	lock             sync.RWMutex
+	updatesSinceSave int
 
 	f *os.File
 
@@ -184,6 +183,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 	rc.cache[rec.Offset] = rec
+	rc.updatesSinceSave++
 	if !rc.preventPurge {
 		rc.purge()
 	}
@@ -200,7 +200,7 @@ func (rc *recordCache) save() {
 	}
 	rc.f.Write(b.Bytes())
 	rc.f.Sync()
-	rc.lastSave = time.Now()
+	rc.updatesSinceSave = 0
 }
 
 func (rc *recordCache) purge() {
@@ -217,7 +217,7 @@ func (rc *recordCache) purge() {
 		delete(rc.cache, deletedKey)
 		purged++
 	}
-	if time.Now().Sub(rc.lastSave) > time.Second {
+	if rc.updatesSinceSave > 4*rc.size {
 		rc.save()
 	}
 }
