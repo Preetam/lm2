@@ -65,7 +65,7 @@ func (c *Cursor) Next() bool {
 
 	c.current.lock.RLock()
 	for (c.current.Deleted != 0 && c.current.Deleted <= c.snapshot) ||
-		(c.current.Offset > c.snapshot) {
+		(c.current.Offset >= c.snapshot) {
 		rec, err = c.collection.readRecord(c.current.Next)
 		if err != nil {
 			c.current.lock.RUnlock()
@@ -100,33 +100,38 @@ func (c *Cursor) Value() string {
 }
 
 // Seek positions the cursor at the last key less than
-// the provided key.
+// or equal to the provided key.
 func (c *Cursor) Seek(key string) {
+	var rec *record
+	var err error
 	offset := c.collection.cache.findLastLessThan(key)
 	if offset == 0 {
-		head, err := c.collection.readRecord(c.collection.Head)
+		c.collection.metaLock.RLock()
+		rec, err = c.collection.readRecord(c.collection.Head)
+		c.collection.metaLock.RUnlock()
 		if err != nil {
 			c.current = nil
 			return
 		}
-		c.current = head
-		c.first = true
-		return
-	}
-	rec, err := c.collection.readRecord(offset)
-	if err != nil {
-		c.current = nil
-		return
+	} else {
+		rec, err = c.collection.readRecord(offset)
+		if err != nil {
+			c.current = nil
+			return
+		}
 	}
 	c.current = rec
 	c.first = true
 	for rec != nil {
 		rec.lock.RLock()
 		if rec.Key > key {
+			rec.lock.RUnlock()
 			break
 		}
-		if (rec.Deleted > 0 && rec.Deleted < c.snapshot) || (c.current.Offset > c.snapshot) {
-			rec.lock.RUnlock()
+		if (rec.Deleted > 0 && rec.Deleted <= c.snapshot) || (rec.Offset >= c.snapshot) {
+			oldRec := rec
+			rec = c.collection.nextRecord(rec)
+			oldRec.lock.RUnlock()
 			continue
 		}
 		if rec.Key <= key {
