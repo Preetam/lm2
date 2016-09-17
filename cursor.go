@@ -1,7 +1,5 @@
 package lm2
 
-import "errors"
-
 // Cursor represents a snapshot cursor.
 type Cursor struct {
 	collection *Collection
@@ -16,7 +14,12 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
 	if c.Head == 0 {
-		return nil, errors.New("lm2: no keys")
+		return &Cursor{
+			collection: c,
+			current:    nil,
+			first:      false,
+			snapshot:   c.LastCommit,
+		}, nil
 	}
 
 	head, err := c.readRecord(c.Head)
