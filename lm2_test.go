@@ -473,3 +473,54 @@ func TestSeekToFirstKey(t *testing.T) {
 		t.Fatalf("expected cursor key to be 'a', got %v", cur.Key())
 	}
 }
+
+func TestOverwriteFirstKey(t *testing.T) {
+	c, err := NewCollection("/tmp/test_overwritefirstkey.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	wb := NewWriteBatch()
+	wb.Set("a", "1")
+	wb.Set("b", "1")
+	wb.Set("c", "1")
+	wb.Set("d", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("a", "2")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cur.Seek("a")
+	if !cur.Valid() {
+		t.Fatal("expected cursor to be valid")
+	}
+
+	if !cur.Next() {
+		t.Fatal("expected Next() to return true")
+	}
+
+	if cur.Key() != "a" {
+		t.Fatalf("expected cursor key to be 'a', got %v", cur.Key())
+	}
+
+	if !cur.Next() {
+		t.Fatal("expected Next() to return true")
+	}
+
+	if cur.Key() != "b" {
+		t.Fatalf("expected cursor key to be 'b', got %v", cur.Key())
+	}
+}
