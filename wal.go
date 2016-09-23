@@ -260,3 +260,8 @@ func (w *wal) Truncate() error {
 func (w *wal) Close() {
 	w.f.Close()
 }
+
+func (w *wal) Destroy() error {
+	w.Close()
+	return os.Remove(w.f.Name())
+}

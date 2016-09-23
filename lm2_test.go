@@ -29,7 +29,7 @@ func TestCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	const N = 1000
 	firstWriteStart := time.Now()
@@ -51,7 +51,7 @@ func TestCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c2.Close()
+	defer c2.Destroy()
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -121,7 +121,7 @@ func TestWriteBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	wb := NewWriteBatch()
 	wb.Set("key1", "1")
@@ -200,7 +200,7 @@ func TestWriteBatch1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	const N = 500
 	for i := 0; i < N; i++ {
@@ -220,7 +220,7 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	const N = 50
 	const NumGoroutines = 8
@@ -271,7 +271,7 @@ func TestWriteBatch2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	wb := NewWriteBatch()
 
@@ -405,6 +405,11 @@ func TestWriteCloseOpen(t *testing.T) {
 		i++
 	}
 	t.Logf("%+v", c.Stats())
+
+	err = c.Destroy()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestReadLastEntry(t *testing.T) {
@@ -436,6 +441,8 @@ func TestReadLastEntry(t *testing.T) {
 		t.Errorf("expected %d records, got %d", 2, entry.NumRecords)
 	}
 	t.Logf("%+v", c.Stats())
+
+	c.Destroy()
 }
 
 func TestSeekToFirstKey(t *testing.T) {
@@ -443,7 +450,7 @@ func TestSeekToFirstKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	wb := NewWriteBatch()
 	wb.Set("a", "1")
@@ -479,7 +486,7 @@ func TestOverwriteFirstKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer c.Destroy()
 
 	wb := NewWriteBatch()
 	wb.Set("a", "1")

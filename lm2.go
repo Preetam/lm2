@@ -150,6 +150,11 @@ func (rc *recordCache) close() {
 	rc.f.Close()
 }
 
+func (rc *recordCache) destroy() error {
+	rc.close()
+	return os.Remove(rc.f.Name())
+}
+
 func (rc *recordCache) findLastLessThan(key string) int64 {
 	rc.lock.RLock()
 	defer rc.lock.RUnlock()
@@ -826,4 +831,23 @@ func (c *Collection) Version() int64 {
 // Stats returns collection statistics.
 func (c *Collection) Stats() Stats {
 	return c.stats.clone()
+}
+
+// Destroy closes the collection and removes its associated data files.
+func (c *Collection) Destroy() error {
+	c.Close()
+	var err error
+	err = os.Remove(c.f.Name())
+	if err != nil {
+		return err
+	}
+	err = c.wal.Destroy()
+	if err != nil {
+		return err
+	}
+	err = c.cache.destroy()
+	if err != nil {
+		return err
+	}
+	return nil
 }
