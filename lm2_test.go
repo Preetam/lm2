@@ -193,6 +193,24 @@ func TestWriteBatch(t *testing.T) {
 		}
 		i++
 	}
+
+	// Check if cursor can be reset
+	cur.Seek("")
+	i = 0
+	for cur.Next() {
+		if cur.current.Deleted > 0 {
+			continue
+		}
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+			t.Logf("%+#v", cur.current)
+		}
+		i++
+	}
 }
 
 func TestWriteBatch1(t *testing.T) {
