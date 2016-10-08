@@ -304,44 +304,7 @@ func (c *Collection) nextRecord(rec *record) *record {
 	return nextRec
 }
 
-func (c *Collection) writeRecord(rec *record) (int64, error) {
-	offset, err := c.f.Seek(0, 2)
-	if err != nil {
-		return 0, err
-	}
-
-	rec.KeyLen = uint16(len(rec.Key))
-	rec.ValLen = uint32(len(rec.Value))
-
-	buf := bytes.NewBuffer(nil)
-
-	err = binary.Write(buf, binary.LittleEndian, rec.recordHeader)
-	if err != nil {
-		return 0, err
-	}
-
-	_, err = buf.WriteString(rec.Key)
-	if err != nil {
-		return 0, err
-	}
-	_, err = buf.WriteString(rec.Value)
-	if err != nil {
-		return 0, err
-	}
-
-	n, err := c.f.Write(buf.Bytes())
-	if err != nil {
-		return 0, fmt.Errorf("lm2: error writing record: %v", err)
-	}
-	if n != buf.Len() {
-		return 0, errors.New("lm2: partial write")
-	}
-
-	rec.Offset = offset
-	return offset, nil
-}
-
-func writeRecord2(rec *record, currentOffset int64, buf *bytes.Buffer) error {
+func writeRecord(rec *record, currentOffset int64, buf *bytes.Buffer) error {
 	rec.KeyLen = uint16(len(rec.Key))
 	rec.ValLen = uint32(len(rec.Value))
 
@@ -546,7 +509,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				Value: value,
 			}
 			newRecordOffset := currentOffset + int64(appendBuf.Len())
-			err = writeRecord2(rec, newRecordOffset, appendBuf)
+			err = writeRecord(rec, newRecordOffset, appendBuf)
 			if err != nil {
 				return 0, err
 			}
@@ -582,7 +545,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			Value: value,
 		}
 		newRecordOffset := currentOffset + int64(appendBuf.Len())
-		err = writeRecord2(rec, newRecordOffset, appendBuf)
+		err = writeRecord(rec, newRecordOffset, appendBuf)
 		if err != nil {
 			return 0, err
 		}
