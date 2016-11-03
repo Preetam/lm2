@@ -26,12 +26,30 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Cursor{
+	cur := &Cursor{
 		collection: c,
 		current:    head,
 		first:      true,
 		snapshot:   c.LastCommit,
-	}, nil
+	}
+
+	var rec *record
+	cur.current.lock.RLock()
+	for (cur.current.Deleted != 0 && cur.current.Deleted <= cur.snapshot) ||
+		(cur.current.Offset >= cur.snapshot) {
+		rec, err = cur.collection.readRecord(cur.current.Next)
+		if err != nil {
+			cur.current.lock.RUnlock()
+			cur.current = nil
+			return cur, nil
+		}
+		cur.current.lock.RUnlock()
+		cur.current = rec
+		cur.current.lock.RLock()
+	}
+	cur.current.lock.RUnlock()
+
+	return cur, nil
 }
 
 // Valid returns true if the cursor's Key() and Value()
@@ -125,6 +143,13 @@ func (c *Cursor) Seek(key string) {
 	for rec != nil {
 		rec.lock.RLock()
 		if rec.Key > key {
+			if (rec.Deleted > 0 && rec.Deleted <= c.snapshot) || (rec.Offset >= c.snapshot) {
+				oldRec := rec
+				rec = c.collection.nextRecord(rec)
+				oldRec.lock.RUnlock()
+				c.current = rec
+				continue
+			}
 			rec.lock.RUnlock()
 			break
 		}
