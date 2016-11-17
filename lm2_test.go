@@ -595,3 +595,18 @@ func TestOverwriteFirstKeyOnly(t *testing.T) {
 		t.Log(cur.Key(), "=>", cur.Value())
 	}
 }
+
+func TestDeleteInFirstUpdate(t *testing.T) {
+	c, err := NewCollection("/tmp/test_deleteinfirstupdate.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Delete("a")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
