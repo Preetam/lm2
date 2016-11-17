@@ -585,6 +585,9 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 	for key := range wb.deletes {
 		offset := lastLessThanOrEqualCache[key]
+		if offset == 0 {
+			continue
+		}
 		rec, err := c.readRecord(offset)
 		if err != nil {
 			return 0, err
