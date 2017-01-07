@@ -13,9 +13,7 @@ const (
 )
 
 type wal struct {
-	f              *os.File
-	fileSize       int64
-	lastGoodOffset int64
+	f *os.File
 }
 
 type walEntryHeader struct {
@@ -25,8 +23,7 @@ type walEntryHeader struct {
 }
 
 type walEntryFooter struct {
-	Magic       uint32
-	StartOffset int64
+	Magic uint32
 }
 
 type walEntry struct {
@@ -52,8 +49,7 @@ func newWALEntry() *walEntry {
 			NumRecords: 0,
 		},
 		walEntryFooter: walEntryFooter{
-			Magic:       walFooterMagic,
-			StartOffset: 0,
+			Magic: walFooterMagic,
 		},
 	}
 }
@@ -86,15 +82,8 @@ func openWAL(filename string) (*wal, error) {
 		return nil, err
 	}
 
-	stat, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-
 	return &wal{
-		f:        f,
-		fileSize: stat.Size(),
+		f: f,
 	}, nil
 }
 
@@ -114,13 +103,6 @@ func newWAL(filename string) (*wal, error) {
 }
 
 func (w *wal) Append(entry *walEntry) (int64, error) {
-	startOffset, err := w.f.Seek(0, 2)
-	if err != nil {
-		w.Truncate()
-		return 0, errors.New("lm2: couldn't get offset")
-	}
-	entry.StartOffset = startOffset
-
 	buf := bytes.NewBuffer(nil)
 	for _, rec := range entry.records {
 		buf.Write(rec.Bytes())
@@ -129,27 +111,19 @@ func (w *wal) Append(entry *walEntry) (int64, error) {
 
 	binary.Write(buf, binary.LittleEndian, entry.walEntryFooter)
 
-	err = binary.Write(w.f, binary.LittleEndian, entry.walEntryHeader)
+	headerBuf := bytes.NewBuffer(nil)
+	binary.Write(headerBuf, binary.LittleEndian, entry.walEntryHeader)
+	entryBytes := append(headerBuf.Bytes(), buf.Bytes()...)
+
+	n, err := w.f.WriteAt(entryBytes, 0)
 	if err != nil {
 		w.Truncate()
 		return 0, err
 	}
 
-	n, err := w.f.Write(buf.Bytes())
-	if err != nil {
-		w.Truncate()
-		return 0, err
-	}
-
-	if n != buf.Len() {
+	if n != len(entryBytes) {
 		w.Truncate()
 		return 0, errors.New("lm2: incomplete WAL write")
-	}
-
-	currentOffset, err := w.f.Seek(0, 2)
-	if err != nil {
-		w.Truncate()
-		return 0, errors.New("lm2: couldn't get offset")
 	}
 
 	err = w.f.Sync()
@@ -158,42 +132,19 @@ func (w *wal) Append(entry *walEntry) (int64, error) {
 		return 0, err
 	}
 
-	w.lastGoodOffset = currentOffset
-	return startOffset, nil
+	return 0, nil
 }
 
 func (w *wal) ReadLastEntry() (*walEntry, error) {
-	// Read footer
-	const footerSize = 12
-	_, err := w.f.Seek(-footerSize, 2)
-	if err != nil {
-		return nil, errors.New("lm2: error seeking to WAL footer")
-	}
-	footer := walEntryFooter{}
-	err = binary.Read(w.f, binary.LittleEndian, &footer)
-	if err != nil {
-		return nil, errors.New("lm2: error reading WAL footer")
-	}
-	if footer.Magic != walFooterMagic {
-		return nil, errors.New("lm2: invalid WAL footer magic")
-	}
-
-	// Read entry.
-
-	_, err = w.f.Seek(footer.StartOffset, 0)
+	_, err := w.f.Seek(0, 0)
 	if err != nil {
 		return nil, errors.New("lm2: error seeking to WAL entry start")
 	}
 
-	return w.ReadEntry()
+	return w.readEntry()
 }
 
-func (w *wal) SetOffset(offset int64) error {
-	_, err := w.f.Seek(offset, 0)
-	return err
-}
-
-func (w *wal) ReadEntry() (*walEntry, error) {
+func (w *wal) readEntry() (*walEntry, error) {
 	entry := newWALEntry()
 
 	err := binary.Read(w.f, binary.LittleEndian, &entry.walEntryHeader)
@@ -243,18 +194,11 @@ func (w *wal) ReadEntry() (*walEntry, error) {
 		return nil, errors.New("lm2: invalid WAL footer magic")
 	}
 
-	currentOffset, err := w.f.Seek(0, 2)
-	if err != nil {
-		return nil, errors.New("lm2: couldn't get offset")
-	}
-
-	w.lastGoodOffset = currentOffset
-
 	return entry, nil
 }
 
 func (w *wal) Truncate() error {
-	return w.f.Truncate(w.lastGoodOffset)
+	return w.f.Truncate(0)
 }
 
 func (w *wal) Close() {
