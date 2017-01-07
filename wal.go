@@ -144,11 +144,6 @@ func (w *wal) ReadLastEntry() (*walEntry, error) {
 	return w.readEntry()
 }
 
-func (w *wal) SetOffset(offset int64) error {
-	_, err := w.f.Seek(offset, 0)
-	return err
-}
-
 func (w *wal) readEntry() (*walEntry, error) {
 	entry := newWALEntry()
 

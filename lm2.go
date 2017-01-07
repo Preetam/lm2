@@ -707,7 +707,7 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	}
 	c.cache.c = c
 
-	// read file header
+	// Read file header.
 	c.f.Seek(0, 0)
 	err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 	if err != nil {
@@ -721,9 +721,7 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 		// Maybe latest WAL write didn't succeed.
 		// Truncate.
 		c.wal.Truncate()
-	}
-
-	if lastEntry != nil {
+	} else {
 		// Apply last WAL entry again.
 		for _, walRec := range lastEntry.records {
 			n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
@@ -737,7 +735,7 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 			}
 		}
 
-		// Reread file header
+		// Reread file header because it could have been updated
 		c.f.Seek(0, 0)
 		err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
 		if err != nil {
