@@ -32,9 +32,8 @@ type Collection struct {
 }
 
 type fileHeader struct {
-	Head              int64
-	LastCommit        int64
-	LastValidLogEntry int64
+	Head       int64
+	LastCommit int64
 }
 
 func (h fileHeader) bytes() []byte {
@@ -611,12 +610,10 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	// out to the WAL.
 	c.LastCommit = currentOffset
 	walEntry.Push(newWALRecord(0, c.fileHeader.bytes()))
-	logCommit, err := c.wal.Append(walEntry)
+	_, err = c.wal.Append(walEntry)
 	if err != nil {
 		return 0, err
 	}
-
-	c.LastValidLogEntry = logCommit
 
 	// Update + fsync data file header.
 
@@ -668,7 +665,7 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 
 	// write file header
 	c.fileHeader.Head = 0
-	c.fileHeader.LastCommit = int64(8 * 3)
+	c.fileHeader.LastCommit = int64(8 * 2)
 	c.f.Seek(0, 0)
 	err = binary.Write(c.f, binary.LittleEndian, c.fileHeader)
 	if err != nil {
@@ -722,23 +719,8 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	lastEntry, err := c.wal.ReadLastEntry()
 	if err != nil {
 		// Maybe latest WAL write didn't succeed.
-		// Read the last known good one.
-		err = c.wal.SetOffset(c.LastValidLogEntry)
-		if err != nil {
-			// Nothing else to do. Bail out.
-			c.Close()
-			return nil, err
-		}
-		lastEntry, err = c.wal.ReadEntry()
-		if err != nil {
-			if c.wal.fileSize > 0 {
-				// Nothing else to do. Bail out.
-				c.Close()
-				return nil, err
-			}
-		} else {
-			c.wal.Truncate()
-		}
+		// Truncate.
+		c.wal.Truncate()
 	}
 
 	if lastEntry != nil {
@@ -753,6 +735,14 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 				c.Close()
 				return nil, errors.New("lm2: incomplete data write")
 			}
+		}
+
+		// Reread file header
+		c.f.Seek(0, 0)
+		err = binary.Read(c.f, binary.LittleEndian, &c.fileHeader)
+		if err != nil {
+			c.Close()
+			return nil, fmt.Errorf("lm2: error reading file header: %v", err)
 		}
 	}
 
