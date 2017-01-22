@@ -179,19 +179,35 @@ func (rc *recordCache) findLastLessThan(key string) int64 {
 }
 
 func (rc *recordCache) push(rec *record) {
-	rc.lock.Lock()
-	defer rc.lock.Unlock()
+	rc.lock.RLock()
 
 	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
-		rc.maxKeyRecord = rec
-	} else if len(rc.cache) == rc.size && rand.Float32() >= 0.01 {
+		rc.lock.RUnlock()
+
+		rc.lock.Lock()
+		if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
+			rc.maxKeyRecord = rec
+		}
+		rc.lock.Unlock()
+
 		return
 	}
+
+	if len(rc.cache) == rc.size && rand.Float32() >= 0.01 {
+		rc.lock.RUnlock()
+		return
+	}
+
+	rc.lock.RUnlock()
+	rc.lock.Lock()
+
 	rc.cache[rec.Offset] = rec
 	rc.updatesSinceSave++
 	if !rc.preventPurge {
 		rc.purge()
 	}
+
+	rc.lock.Unlock()
 }
 
 func (rc *recordCache) save() {
