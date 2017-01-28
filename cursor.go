@@ -142,7 +142,7 @@ func (c *Cursor) Seek(key string) {
 	c.first = true
 	for rec != nil {
 		rec.lock.RLock()
-		if rec.Key > key {
+		if rec.Key >= key {
 			if (rec.Deleted > 0 && rec.Deleted <= c.snapshot) || (rec.Offset >= c.snapshot) {
 				oldRec := rec
 				rec = c.collection.nextRecord(rec)
@@ -159,7 +159,7 @@ func (c *Cursor) Seek(key string) {
 			oldRec.lock.RUnlock()
 			continue
 		}
-		if rec.Key <= key {
+		if rec.Key < key {
 			c.current = rec
 		}
 		oldRec := rec

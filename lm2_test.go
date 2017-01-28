@@ -610,3 +610,49 @@ func TestDeleteInFirstUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSeekOverwrittenKey(t *testing.T) {
+	c, err := NewCollection("/tmp/test_seekoverwrittenkey.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("committed", "0")
+	wb.Delete("pending")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("1", "a")
+	wb.Set("pending", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("committed", "1")
+	wb.Delete("pending")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cur.Seek("committed")
+	if !cur.Next() {
+		t.Fatal("expected cur.Next() to return true")
+	}
+
+	if cur.Key() != "committed" {
+		t.Fatalf("expected cur.Key() to be %s, got %s", "committed", cur.Key())
+	}
+}
