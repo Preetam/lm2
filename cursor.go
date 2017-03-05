@@ -1,5 +1,7 @@
 package lm2
 
+import "sync/atomic"
+
 // Cursor represents a snapshot cursor.
 type Cursor struct {
 	collection *Collection
@@ -11,6 +13,10 @@ type Cursor struct {
 // NewCursor returns a new cursor with a snapshot view of the
 // current collection state.
 func (c *Collection) NewCursor() (*Cursor, error) {
+	if atomic.LoadUint32(&c.internalState) != 0 {
+		return nil, ErrInternal
+	}
+
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
 	if c.Head == 0 {
@@ -62,6 +68,11 @@ func (c *Cursor) Valid() bool {
 // Next moves the cursor to the next record. It returns true
 // if it lands on a valid record.
 func (c *Cursor) Next() bool {
+	if atomic.LoadUint32(&c.collection.internalState) != 0 {
+		c.current = nil
+		return false
+	}
+
 	if !c.Valid() {
 		return false
 	}
@@ -120,6 +131,10 @@ func (c *Cursor) Value() string {
 // Seek positions the cursor at the last key less than
 // or equal to the provided key.
 func (c *Cursor) Seek(key string) {
+	if atomic.LoadUint32(&c.collection.internalState) != 0 {
+		return
+	}
+
 	var rec *record
 	var err error
 	offset := c.collection.cache.findLastLessThan(key)

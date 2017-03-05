@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 const sentinelMagic = 0xDEAD10CC
@@ -18,6 +19,9 @@ var (
 	// ErrDoesNotExist is returned when a collection's data file
 	// doesn't exist.
 	ErrDoesNotExist = errors.New("lm2: does not exist")
+	// ErrInternal is returned when the internal state of the collection
+	// is invalid. The collection should be closed and reopened.
+	ErrInternal = errors.New("lm2: internal error")
 )
 
 // Collection represents an ordered linked list map.
@@ -27,6 +31,9 @@ type Collection struct {
 	wal   *wal
 	cache *recordCache
 	stats Stats
+
+	// internalState is 0 if OK, 1 if inconsistent.
+	internalState uint32
 
 	metaLock sync.RWMutex
 }
@@ -412,6 +419,10 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64) (
 // Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
 // It returns the new version (on success) and an error.
 func (c *Collection) Update(wb *WriteBatch) (int64, error) {
+	if atomic.LoadUint32(&c.internalState) != 0 {
+		return 0, ErrInternal
+	}
+
 	c.metaLock.Lock()
 	defer c.metaLock.Unlock()
 
@@ -483,6 +494,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 	// NOTE: we shouldn't be reading any more records after this point.
 	// TODO: assert it.
+	// We'll assume that any errors after this point result in invalid internal state.
 
 	walEntry := newWALEntry()
 
@@ -492,6 +504,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	appendBuf := bytes.NewBuffer(nil)
 	currentOffset, err := c.f.Seek(0, 2)
 	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, errors.New("lm2: couldn't get current file offset")
 	}
 	for _, key := range keys {
@@ -526,6 +539,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			newRecordOffset := currentOffset + int64(appendBuf.Len())
 			err = writeRecord(rec, newRecordOffset, appendBuf)
 			if err != nil {
+				atomic.StoreUint32(&c.internalState, 1)
 				return 0, err
 			}
 			c.Head = newRecordOffset
@@ -535,6 +549,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		prevRec, err := c.readRecord(offset)
 		if err != nil {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
 		{
@@ -548,6 +563,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			if maxLessThan != "" {
 				prevRec, err = c.readRecord(newlyInserted[maxLessThan])
 				if err != nil {
+					atomic.StoreUint32(&c.internalState, 1)
 					return 0, err
 				}
 			}
@@ -562,6 +578,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		newRecordOffset := currentOffset + int64(appendBuf.Len())
 		err = writeRecord(rec, newRecordOffset, appendBuf)
 		if err != nil {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
 		newlyInserted[key] = newRecordOffset
@@ -576,9 +593,11 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	}
 	n, err := c.f.Write(appendBuf.Bytes())
 	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, errors.New("lm2: appending records failed")
 	}
 	if n != appendBuf.Len() {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, errors.New("lm2: partial write")
 	}
 
@@ -586,12 +605,14 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 	currentOffset, err = c.writeSentinel()
 	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, err
 	}
 
 	// fsync data file.
 	err = c.f.Sync()
 	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, err
 	}
 
@@ -605,6 +626,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		rec, err := c.readRecord(offset)
 		if err != nil {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
 		if rec.Deleted == 0 {
@@ -616,6 +638,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	for _, offset := range overwrittenRecords {
 		rec, err := c.readRecord(offset)
 		if err != nil {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
 		rec.Deleted = currentOffset
@@ -628,6 +651,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	walEntry.Push(newWALRecord(0, c.fileHeader.bytes()))
 	_, err = c.wal.Append(walEntry)
 	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
 		return 0, err
 	}
 
@@ -636,15 +660,23 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	for _, walRec := range walEntry.records {
 		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
 		if err != nil {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
 		if int64(n) != walRec.Size {
+			atomic.StoreUint32(&c.internalState, 1)
 			return 0, errors.New("lm2: incomplete data write")
 		}
 	}
 
 	c.stats.incRecordsWritten(uint64(len(newlyInserted)))
-	return c.LastCommit, c.f.Sync()
+	err = c.f.Sync()
+	if err != nil {
+		atomic.StoreUint32(&c.internalState, 1)
+		return 0, err
+	}
+
+	return c.LastCommit, nil
 }
 
 // NewCollection creates a new collection with a data file at file.
