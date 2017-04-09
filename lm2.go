@@ -319,11 +319,11 @@ func (c *Collection) nextRecord(rec *record) (*record, error) {
 	if rec == nil {
 		return nil, errors.New("lm2: invalid record")
 	}
-	if rec.Next == 0 {
+	if atomic.LoadInt64(&rec.Next) == 0 {
 		// There's no next record.
 		return nil, nil
 	}
-	nextRec, err := c.readRecord(rec.Next)
+	nextRec, err := c.readRecord(atomic.LoadInt64(&rec.Next))
 	if err != nil {
 		return nil, err
 	}
@@ -577,7 +577,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		rec := &record{
 			recordHeader: recordHeader{
-				Next: prevRec.Next,
+				Next: atomic.LoadInt64(&prevRec.Next),
 			},
 			Key:   key,
 			Value: value,
@@ -590,7 +590,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		newlyInserted[key] = newRecordOffset
 		c.cache.forcePush(rec)
-		prevRec.Next = newRecordOffset
+		atomic.StoreInt64(&prevRec.Next, newRecordOffset)
 		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 		if prevRec.Key == key {
 			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
