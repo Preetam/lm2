@@ -315,15 +315,19 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	return rec, nil
 }
 
-func (c *Collection) nextRecord(rec *record) *record {
+func (c *Collection) nextRecord(rec *record) (*record, error) {
 	if rec == nil {
-		return nil
+		return nil, errors.New("lm2: invalid record")
 	}
-	nextRec, err := c.readRecord(rec.Next)
+	if atomic.LoadInt64(&rec.Next) == 0 {
+		// There's no next record.
+		return nil, nil
+	}
+	nextRec, err := c.readRecord(atomic.LoadInt64(&rec.Next))
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return nextRec
+	return nextRec, nil
 }
 
 func writeRecord(rec *record, currentOffset int64, buf *bytes.Buffer) error {
@@ -409,7 +413,10 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64) (
 		}
 		offset = rec.Offset
 		oldRec := rec
-		rec = c.nextRecord(oldRec)
+		rec, err = c.nextRecord(oldRec)
+		if err != nil {
+			return 0, err
+		}
 		oldRec.lock.RUnlock()
 	}
 
@@ -570,7 +577,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		rec := &record{
 			recordHeader: recordHeader{
-				Next: prevRec.Next,
+				Next: atomic.LoadInt64(&prevRec.Next),
 			},
 			Key:   key,
 			Value: value,
@@ -583,7 +590,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 		newlyInserted[key] = newRecordOffset
 		c.cache.forcePush(rec)
-		prevRec.Next = newRecordOffset
+		atomic.StoreInt64(&prevRec.Next, newRecordOffset)
 		walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 		if prevRec.Key == key {
 			overwrittenRecords = append(overwrittenRecords, prevRec.Offset)

@@ -21,6 +21,9 @@ func verifyOrder(t *testing.T, c *Collection) int {
 			t.Errorf("key %v greater than previous key %v", cur.Key(), prev)
 		}
 	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 	return count
 }
 
@@ -62,6 +65,9 @@ func TestCopy(t *testing.T) {
 	go func() {
 		for cur.Next() {
 			work <- [2]string{cur.Key(), cur.Value()}
+		}
+		if err = cur.Err(); err != nil {
+			t.Fatal(err)
 		}
 		close(work)
 	}()
@@ -152,6 +158,9 @@ func TestWriteBatch(t *testing.T) {
 		}
 		i++
 	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 
 	expected = [][2]string{
 		{"key1", "5"},
@@ -193,6 +202,9 @@ func TestWriteBatch(t *testing.T) {
 		}
 		i++
 	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Check if cursor can be reset
 	cur.Seek("")
@@ -210,6 +222,9 @@ func TestWriteBatch(t *testing.T) {
 			t.Logf("%+#v", cur.current)
 		}
 		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -352,6 +367,9 @@ func TestWriteBatch2(t *testing.T) {
 		}
 		i++
 	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("%+v", c.Stats())
 }
 
@@ -421,6 +439,9 @@ func TestWriteCloseOpen(t *testing.T) {
 				expected[i][0], expected[i][1], cur.Key(), cur.Value())
 		}
 		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
 	}
 	t.Logf("%+v", c.Stats())
 
@@ -497,6 +518,10 @@ func TestSeekToFirstKey(t *testing.T) {
 	if cur.Key() != "a" {
 		t.Fatalf("expected cursor key to be 'a', got %v", cur.Key())
 	}
+
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOverwriteFirstKey(t *testing.T) {
@@ -548,6 +573,10 @@ func TestOverwriteFirstKey(t *testing.T) {
 	if cur.Key() != "b" {
 		t.Fatalf("expected cursor key to be 'b', got %v", cur.Key())
 	}
+
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOverwriteFirstKeyOnly(t *testing.T) {
@@ -593,6 +622,10 @@ func TestOverwriteFirstKeyOnly(t *testing.T) {
 	if cur.Next() {
 		t.Error("expected Next() to return false")
 		t.Log(cur.Key(), "=>", cur.Value())
+	}
+
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -654,5 +687,9 @@ func TestSeekOverwrittenKey(t *testing.T) {
 
 	if cur.Key() != "committed" {
 		t.Fatalf("expected cur.Key() to be %s, got %s", "committed", cur.Key())
+	}
+
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
