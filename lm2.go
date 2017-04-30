@@ -825,6 +825,8 @@ func (c *Collection) sync() error {
 
 // Close closes a collection and all of its resources.
 func (c *Collection) Close() {
+	c.metaLock.Lock()
+	defer c.metaLock.Unlock()
 	c.f.Close()
 	c.wal.Close()
 	c.cache.close()
