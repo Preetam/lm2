@@ -151,7 +151,7 @@ func (c *Cursor) Seek(key string) {
 		rec, err = c.collection.readRecord(c.collection.Head)
 		c.collection.metaLock.RUnlock()
 		if err != nil {
-			if atomic.LoadInt64(&c.current.Next) != 0 {
+			if c.current != nil && atomic.LoadInt64(&c.current.Next) != 0 {
 				c.err = err
 			}
 			c.current = nil

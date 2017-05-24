@@ -693,3 +693,22 @@ func TestSeekOverwrittenKey(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEmptyCollectionCursorSeekPanic(t *testing.T) {
+	c, err := NewCollection("/tmp/test_emptycollectioncursorseekpanic.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cur.Seek("asdf")
+
+	if cur.Valid() {
+		t.Errorf("expected cur.Valid() to return false")
+	}
+}
