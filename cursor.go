@@ -20,7 +20,7 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 
 	c.metaLock.RLock()
 	defer c.metaLock.RUnlock()
-	if c.Head == 0 {
+	if c.Next[0] == 0 {
 		return &Cursor{
 			collection: c,
 			current:    nil,
@@ -29,7 +29,7 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 		}, nil
 	}
 
-	head, err := c.readRecord(c.Head)
+	head, err := c.readRecord(c.Next[0])
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (c *Collection) NewCursor() (*Cursor, error) {
 	cur.current.lock.RLock()
 	for (cur.current.Deleted != 0 && cur.current.Deleted <= cur.snapshot) ||
 		(cur.current.Offset >= cur.snapshot) {
-		rec, err = cur.collection.readRecord(atomic.LoadInt64(&cur.current.Next))
+		rec, err = cur.collection.readRecord(atomic.LoadInt64(&cur.current.Next[0]))
 		if err != nil {
 			cur.current.lock.RUnlock()
 			cur.current = nil
@@ -70,6 +70,7 @@ func (c *Cursor) Valid() bool {
 // Next moves the cursor to the next record. It returns true
 // if it lands on a valid record.
 func (c *Cursor) Next() bool {
+	////log.Println("Cursor.Next()")
 	if atomic.LoadUint32(&c.collection.internalState) != 0 {
 		c.current = nil
 		return false
@@ -81,14 +82,15 @@ func (c *Cursor) Next() bool {
 
 	if c.first {
 		c.first = false
+		//log.Println("c.current = ", c.current.Offset, c.current.Key, c.current.Next)
 		return true
 	}
 
 	c.current.lock.RLock()
-	rec, err := c.collection.readRecord(atomic.LoadInt64(&c.current.Next))
+	rec, err := c.collection.readRecord(atomic.LoadInt64(&c.current.Next[0]))
 	if err != nil {
 		c.current.lock.RUnlock()
-		if atomic.LoadInt64(&c.current.Next) != 0 {
+		if atomic.LoadInt64(&c.current.Next[0]) != 0 {
 			c.err = err
 		}
 		c.current = nil
@@ -100,10 +102,10 @@ func (c *Cursor) Next() bool {
 	c.current.lock.RLock()
 	for (c.current.Deleted != 0 && c.current.Deleted <= c.snapshot) ||
 		(c.current.Offset >= c.snapshot) {
-		rec, err = c.collection.readRecord(atomic.LoadInt64(&c.current.Next))
+		rec, err = c.collection.readRecord(atomic.LoadInt64(&c.current.Next[0]))
 		if err != nil {
 			c.current.lock.RUnlock()
-			if atomic.LoadInt64(&c.current.Next) != 0 {
+			if atomic.LoadInt64(&c.current.Next[0]) != 0 {
 				c.err = err
 			}
 			c.current = nil
@@ -114,6 +116,8 @@ func (c *Cursor) Next() bool {
 		c.current.lock.RLock()
 	}
 	c.current.lock.RUnlock()
+
+	//log.Println("c.current = ", c.current.Offset, c.current.Key, c.current.Next)
 
 	return true
 }
@@ -145,28 +149,17 @@ func (c *Cursor) Seek(key string) {
 
 	var rec *record
 	var err error
-	offset := c.collection.cache.findLastLessThan(key)
-	if offset == 0 {
-		c.collection.metaLock.RLock()
-		rec, err = c.collection.readRecord(c.collection.Head)
-		c.collection.metaLock.RUnlock()
-		if err != nil {
-			if c.current != nil && atomic.LoadInt64(&c.current.Next) != 0 {
-				c.err = err
-			}
-			c.current = nil
-			return
+	c.collection.metaLock.RLock()
+	rec, err = c.collection.readRecord(c.collection.Next[0])
+	c.collection.metaLock.RUnlock()
+	if err != nil {
+		if c.current != nil && atomic.LoadInt64(&c.current.Next[0]) != 0 {
+			c.err = err
 		}
-	} else {
-		rec, err = c.collection.readRecord(offset)
-		if err != nil {
-			if atomic.LoadInt64(&c.current.Next) != 0 {
-				c.err = err
-			}
-			c.current = nil
-			return
-		}
+		c.current = nil
+		return
 	}
+
 	c.current = rec
 	c.first = true
 	for rec != nil {
@@ -174,9 +167,9 @@ func (c *Cursor) Seek(key string) {
 		if rec.Key >= key {
 			if (rec.Deleted > 0 && rec.Deleted <= c.snapshot) || (rec.Offset >= c.snapshot) {
 				oldRec := rec
-				rec, err = c.collection.nextRecord(rec)
+				rec, err = c.collection.nextRecord(rec, 0)
 				if err != nil {
-					if atomic.LoadInt64(&c.current.Next) != 0 {
+					if atomic.LoadInt64(&c.current.Next[0]) != 0 {
 						c.err = err
 					}
 					c.current = nil
@@ -191,9 +184,9 @@ func (c *Cursor) Seek(key string) {
 		}
 		if (rec.Deleted > 0 && rec.Deleted <= c.snapshot) || (rec.Offset >= c.snapshot) {
 			oldRec := rec
-			rec, err = c.collection.nextRecord(rec)
+			rec, err = c.collection.nextRecord(rec, 0)
 			if err != nil {
-				if atomic.LoadInt64(&c.current.Next) != 0 {
+				if atomic.LoadInt64(&c.current.Next[0]) != 0 {
 					c.err = err
 				}
 				c.current = nil
@@ -206,9 +199,9 @@ func (c *Cursor) Seek(key string) {
 			c.current = rec
 		}
 		oldRec := rec
-		rec, err = c.collection.nextRecord(rec)
+		rec, err = c.collection.nextRecord(rec, 0)
 		if err != nil {
-			if atomic.LoadInt64(&c.current.Next) != 0 {
+			if atomic.LoadInt64(&c.current.Next[0]) != 0 {
 				c.err = err
 			}
 			c.current = nil

@@ -309,6 +309,7 @@ func TestWriteBatch2(t *testing.T) {
 	wb := NewWriteBatch()
 
 	wb.Set("key1", "1")
+	t.Log("Set", "key1", "1")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -316,6 +317,7 @@ func TestWriteBatch2(t *testing.T) {
 
 	wb = NewWriteBatch()
 	wb.Set("key2", "1")
+	t.Log("Set", "key2", "1")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -323,6 +325,7 @@ func TestWriteBatch2(t *testing.T) {
 
 	wb = NewWriteBatch()
 	wb.Set("key3", "1")
+	t.Log("Set", "key3", "1")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +333,7 @@ func TestWriteBatch2(t *testing.T) {
 
 	wb = NewWriteBatch()
 	wb.Set("key2", "2")
+	t.Log("Set", "key2", "2")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -337,6 +341,7 @@ func TestWriteBatch2(t *testing.T) {
 
 	wb = NewWriteBatch()
 	wb.Set("key4", "1")
+	t.Log("Set", "key4", "1")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -344,6 +349,7 @@ func TestWriteBatch2(t *testing.T) {
 
 	wb = NewWriteBatch()
 	wb.Delete("key4")
+	t.Log("Delete", "key4")
 	_, err = c.Update(wb)
 	if err != nil {
 		t.Fatal(err)
@@ -449,39 +455,6 @@ func TestWriteCloseOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestReadLastEntry(t *testing.T) {
-	c, err := NewCollection("/tmp/test_readlastentry.lm2", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	wb := NewWriteBatch()
-	wb.Set("key1", "1")
-	wb.Set("key2", "1")
-	_, err = c.Update(wb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-
-	wal, err := openWAL("/tmp/test_readlastentry.lm2.wal")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	entry, err := wal.ReadLastEntry()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if entry.NumRecords != 2 {
-		t.Errorf("expected %d records, got %d", 2, entry.NumRecords)
-	}
-	t.Logf("%+v", c.Stats())
-
-	c.Destroy()
 }
 
 func TestSeekToFirstKey(t *testing.T) {
@@ -711,4 +684,67 @@ func TestEmptyCollectionCursorSeekPanic(t *testing.T) {
 	if cur.Valid() {
 		t.Errorf("expected cur.Valid() to return false")
 	}
+}
+
+func TestSimple(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "1"},
+		{"key2", "2"},
+		{"key3", "3"},
+	}
+
+	c, err := NewCollection("/tmp/test_simple.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("key2", "2")
+	t.Log("Set", "key2", "2")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "1")
+	t.Log("Set", "key1", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key3", "3")
+	t.Log("Set", "key3", "3")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		} else {
+			t.Logf("got %v => %v", cur.Key(), cur.Value())
+		}
+		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", c.Stats())
 }
