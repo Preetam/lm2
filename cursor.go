@@ -70,7 +70,6 @@ func (c *Cursor) Valid() bool {
 // Next moves the cursor to the next record. It returns true
 // if it lands on a valid record.
 func (c *Cursor) Next() bool {
-	////log.Println("Cursor.Next()")
 	if atomic.LoadUint32(&c.collection.internalState) != 0 {
 		c.current = nil
 		return false
@@ -82,7 +81,6 @@ func (c *Cursor) Next() bool {
 
 	if c.first {
 		c.first = false
-		//log.Println("c.current = ", c.current.Offset, c.current.Key, c.current.Next)
 		return true
 	}
 
@@ -116,8 +114,6 @@ func (c *Cursor) Next() bool {
 		c.current.lock.RLock()
 	}
 	c.current.lock.RUnlock()
-
-	//log.Println("c.current = ", c.current.Offset, c.current.Key, c.current.Next)
 
 	return true
 }

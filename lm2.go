@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"sort"
@@ -13,7 +14,12 @@ import (
 )
 
 const sentinelMagic = 0xDEAD10CC
-const maxLevels = 20
+
+const (
+	maxLevels = 4
+	levelProb = 0.5
+	cacheProb = 0.01
+)
 
 var (
 	// ErrDoesNotExist is returned when a collection's data file
@@ -24,6 +30,178 @@ var (
 	ErrInternal = errors.New("lm2: internal error")
 )
 
+type recordCache struct {
+	cache            map[int64]*record
+	maxKeyRecord     *record
+	size             int
+	preventPurge     bool
+	lock             sync.RWMutex
+	updatesSinceSave int
+
+	f *os.File
+
+	c *Collection
+}
+
+func newCache(size int, file string) (*recordCache, error) {
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+	err = f.Truncate(0)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &recordCache{
+		cache:        map[int64]*record{},
+		maxKeyRecord: nil,
+		size:         size,
+		f:            f,
+	}, nil
+}
+
+func openCache(size int, file string) (*recordCache, error) {
+	f, err := os.OpenFile(file, os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	return &recordCache{
+		cache:        map[int64]*record{},
+		maxKeyRecord: nil,
+		size:         size,
+		f:            f,
+	}, nil
+}
+
+func (rc *recordCache) reload() {
+	numRecords := 0
+	b, err := ioutil.ReadAll(rc.f)
+	maxNumRecords := len(b) / 8
+	if err != nil {
+		rc.f.Truncate(int64(maxNumRecords * 8))
+		return
+	}
+	buf := bytes.NewReader(b)
+	for i := 0; i < maxNumRecords; i++ {
+		offset := int64(0)
+		err = binary.Read(buf, binary.LittleEndian, &offset)
+		if err != nil {
+			break
+		}
+
+		rec, err := rc.c.readRecord(offset)
+		if err != nil {
+			break
+		}
+
+		rc.push(rec)
+
+		numRecords++
+	}
+
+	rc.f.Truncate(int64(numRecords * 8))
+}
+
+func (rc *recordCache) close() {
+	rc.f.Close()
+}
+
+func (rc *recordCache) destroy() error {
+	rc.close()
+	return os.Remove(rc.f.Name())
+}
+
+func (rc *recordCache) findLastLessThan(key string) int64 {
+	rc.lock.RLock()
+	defer rc.lock.RUnlock()
+
+	if rc.maxKeyRecord != nil {
+		if rc.maxKeyRecord.Key < key {
+			return rc.maxKeyRecord.Offset
+		}
+	}
+	max := ""
+	maxOffset := int64(0)
+
+	for offset, record := range rc.cache {
+		if record.Key >= key {
+			continue
+		}
+		if record.Key > max {
+			max = record.Key
+			maxOffset = offset
+		}
+	}
+	return maxOffset
+}
+
+func (rc *recordCache) push(rec *record) {
+	rc.lock.RLock()
+
+	if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
+		rc.lock.RUnlock()
+
+		rc.lock.Lock()
+		if rc.maxKeyRecord == nil || rc.maxKeyRecord.Key < rec.Key {
+			rc.maxKeyRecord = rec
+		}
+		rc.lock.Unlock()
+
+		return
+	}
+
+	if len(rc.cache) == rc.size && rand.Float32() >= cacheProb {
+		rc.lock.RUnlock()
+		return
+	}
+
+	rc.lock.RUnlock()
+	rc.lock.Lock()
+
+	rc.cache[rec.Offset] = rec
+	rc.updatesSinceSave++
+	if !rc.preventPurge {
+		rc.purge()
+	}
+
+	rc.lock.Unlock()
+}
+
+func (rc *recordCache) save() {
+	_, err := rc.f.Seek(0, 0)
+	if err != nil {
+		return
+	}
+	b := bytes.NewBuffer(make([]byte, 0, rc.size))
+	for offset := range rc.cache {
+		binary.Write(b, binary.LittleEndian, offset)
+	}
+	rc.f.Write(b.Bytes())
+	rc.f.Sync()
+	rc.updatesSinceSave = 0
+}
+
+func (rc *recordCache) purge() {
+	purged := 0
+	for len(rc.cache) > rc.size {
+		deletedKey := int64(0)
+		for k := range rc.cache {
+			if k == rc.maxKeyRecord.Offset {
+				continue
+			}
+			deletedKey = k
+			break
+		}
+		delete(rc.cache, deletedKey)
+		purged++
+	}
+	if rc.updatesSinceSave > 4*rc.size {
+		rc.save()
+	}
+}
+
 // Collection represents an ordered linked list map.
 type Collection struct {
 	fileHeader
@@ -31,6 +209,7 @@ type Collection struct {
 	wal       *wal
 	stats     Stats
 	dirty     map[int64]*record
+	cache     *recordCache
 	dirtyLock sync.Mutex
 
 	// internalState is 0 if OK, 1 if inconsistent.
@@ -82,7 +261,7 @@ type record struct {
 func generateLevel() int {
 	level := 0
 	for i := 0; i < maxLevels-1; i++ {
-		if rand.Float32() <= 0.5 {
+		if rand.Float32() <= levelProb {
 			level++
 		} else {
 			break
@@ -107,8 +286,6 @@ func (c *Collection) setDirty(offset int64, rec *record) {
 }
 
 func (c *Collection) readRecord(offset int64) (*record, error) {
-	//time.Sleep(time.Second / 10)
-	//log.Println("readRecord", offset)
 	if offset == 0 {
 		return nil, errors.New("lm2: invalid record offset 0")
 	}
@@ -116,6 +293,15 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	if rec := c.getDirty(offset); rec != nil {
 		return rec, nil
 	}
+
+	c.cache.lock.RLock()
+	if rec := c.cache.cache[offset]; rec != nil {
+		c.cache.lock.RUnlock()
+		c.stats.incRecordsRead(1)
+		c.stats.incCacheHits(1)
+		return rec, nil
+	}
+	c.cache.lock.RUnlock()
 
 	recordHeaderBytes := [recordHeaderSize]byte{}
 	n, err := c.f.ReadAt(recordHeaderBytes[:], offset)
@@ -157,7 +343,6 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 }
 
 func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
-	//log.Println("nextRecord", rec)
 	if rec == nil {
 		return nil, errors.New("lm2: invalid record")
 	}
@@ -169,6 +354,7 @@ func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.cache.push(rec)
 	return nextRec, nil
 }
 
@@ -211,7 +397,6 @@ func (c *Collection) writeSentinel() (int64, error) {
 }
 
 func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, level int) (int64, error) {
-	//log.Println("findLastLessThanOrEqual", key, startingOffset, level)
 	offset := startingOffset
 
 	if c.Next[level] == 0 {
@@ -225,23 +410,31 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 		// read the head
 		rec, err = c.readRecord(c.Next[level])
 		if err != nil {
-			//log.Println("!")
 			return 0, err
 		}
 		if rec.Key > key { // we have a new head
 			return 0, nil
 		}
+
+		if level == maxLevels-1 {
+			cacheResult := c.cache.findLastLessThan(key)
+			if cacheResult != 0 {
+				rec, err = c.readRecord(cacheResult)
+				if err != nil {
+					return 0, err
+				}
+			}
+		}
+
+		offset = rec.Offset
 	} else {
 		rec, err = c.readRecord(offset)
 		if err != nil {
-			//log.Println("!!", offset)
 			return 0, err
 		}
 	}
 
 	for rec != nil {
-		//log.Println(rec.Offset, rec.Key, rec.Next)
-		//time.Sleep(time.Second / 10)
 		rec.lock.RLock()
 		if rec.Key > key {
 			rec.lock.RUnlock()
@@ -320,7 +513,6 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		for i := maxLevels - 1; i > level; i-- {
 			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i)
 			if err != nil {
-				//log.Println("asdf")
 				return 0, err
 			}
 			if offset > 0 {
@@ -334,13 +526,10 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		for ; level >= 0; level-- {
 			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[level], level)
 			if err != nil {
-				//log.Println("asdf")
 				return 0, err
 			}
 			if offset == 0 {
 				// Insert at head
-				//log.Println("inserting at head:", key)
-				//log.Println("head was", c.fileHeader.Next[level])
 				atomic.StoreInt64(&rec.Next[level], c.fileHeader.Next[level])
 				atomic.StoreInt64(&c.fileHeader.Next[level], newRecordOffset)
 			} else {
@@ -349,22 +538,18 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				if prev := c.getDirty(offset); prev != nil {
 					prevRec = prev
 				} else {
-					//log.Println("asdfasdfasdf")
 					prevRec, err = c.readRecord(offset)
 					if err != nil {
 						atomic.StoreUint32(&c.internalState, 1)
 						return 0, err
 					}
 				}
-				//log.Println(prevRec.Key, "next was", prevRec.Next)
 				atomic.StoreInt64(&rec.Next[level], prevRec.Next[level])
-				//log.Println(prevRec.Key, "next is", rec.Key)
 				atomic.StoreInt64(&prevRec.Next[level], newRecordOffset)
 				c.setDirty(prevRec.Offset, prevRec)
 				walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 
 				if prevRec.Key == key {
-					//log.Println("overwrote", key)
 					overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 				}
 
@@ -381,7 +566,6 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				return 0, err
 			}
 			c.setDirty(newRecordOffset, rec)
-			//log.Println("new record at level ", level, rec.Key, rec.Value, "at", newRecordOffset, rec.Next)
 		}
 	}
 
@@ -461,7 +645,6 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		if dirtyRec := c.getDirty(offset); dirtyRec != nil {
 			rec = dirtyRec
 		} else {
-			//log.Println("overwritten readRecord")
 			rec, err = c.readRecord(offset)
 			if err != nil {
 				atomic.StoreUint32(&c.internalState, 1)
@@ -522,10 +705,16 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 		f.Close()
 		return nil, err
 	}
-
+	cache, err := newCache(cacheSize, file+".cache")
+	if err != nil {
+		f.Close()
+		wal.Close()
+		return nil, err
+	}
 	c := &Collection{
-		f:   f,
-		wal: wal,
+		f:     f,
+		wal:   wal,
+		cache: cache,
 	}
 
 	// write file header
@@ -558,10 +747,16 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 		f.Close()
 		return nil, fmt.Errorf("lm2: error WAL: %v", err)
 	}
-
+	cache, err := openCache(cacheSize, file+".cache")
+	if err != nil {
+		f.Close()
+		wal.Close()
+		return nil, err
+	}
 	c := &Collection{
-		f:   f,
-		wal: wal,
+		f:     f,
+		wal:   wal,
+		cache: cache,
 	}
 
 	// Read file header.
