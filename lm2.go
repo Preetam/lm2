@@ -28,6 +28,8 @@ var (
 	// ErrInternal is returned when the internal state of the collection
 	// is invalid. The collection should be closed and reopened.
 	ErrInternal = errors.New("lm2: internal error")
+
+	fileVersion = [8]byte{'l', 'm', '2', '_', '0', '0', '1', '\n'}
 )
 
 type recordCache struct {
@@ -219,6 +221,7 @@ type Collection struct {
 }
 
 type fileHeader struct {
+	Version    [8]byte
 	Next       [maxLevels]int64
 	LastCommit int64
 }
@@ -230,13 +233,15 @@ func (h fileHeader) bytes() []byte {
 }
 
 type recordHeader struct {
+	_       uint8 // reserved
+	_       uint8 // reserved
 	Next    [maxLevels]int64
 	Deleted int64
 	KeyLen  uint16
 	ValLen  uint32
 }
 
-const recordHeaderSize = (maxLevels * 8) + 8 + 2 + 4
+const recordHeaderSize = 2 + (maxLevels * 8) + 8 + 2 + 4
 
 func (h recordHeader) bytes() []byte {
 	buf := bytes.NewBuffer(nil)
@@ -358,7 +363,7 @@ func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
 	return nextRec, nil
 }
 
-func writeRecord(rec *record, currentOffset int64, buf *bytes.Buffer) error {
+func writeRecord(rec *record, buf *bytes.Buffer) error {
 	rec.KeyLen = uint16(len(rec.Key))
 	rec.ValLen = uint32(len(rec.Value))
 
@@ -376,7 +381,6 @@ func writeRecord(rec *record, currentOffset int64, buf *bytes.Buffer) error {
 		return err
 	}
 
-	rec.Offset = currentOffset
 	return nil
 }
 
@@ -501,14 +505,15 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	for _, key := range keys {
 		value := wb.sets[key]
 		level := generateLevel()
+		newRecordOffset := currentOffset + int64(appendBuf.Len())
 		rec := &record{
 			recordHeader: recordHeader{
 				Next: [maxLevels]int64{},
 			},
-			Key:   key,
-			Value: value,
+			Offset: newRecordOffset,
+			Key:    key,
+			Value:  value,
 		}
-		newRecordOffset := currentOffset + int64(appendBuf.Len())
 
 		for i := maxLevels - 1; i > level; i-- {
 			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i)
@@ -549,7 +554,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				c.setDirty(prevRec.Offset, prevRec)
 				walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 
-				if prevRec.Key == key {
+				if prevRec.Key == key && prevRec.Deleted == 0 {
 					overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 				}
 
@@ -560,7 +565,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 			startingOffsets[level] = newRecordOffset
 
-			err = writeRecord(rec, newRecordOffset, appendBuf)
+			err = writeRecord(rec, appendBuf)
 			if err != nil {
 				atomic.StoreUint32(&c.internalState, 1)
 				return 0, err
@@ -594,25 +599,6 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		return 0, err
 	}
 
-	// Mark deleted and overwritten records as "deleted" at sentinel offset.
-	// (This happens in memory.)
-	//
-	// for key := range wb.deletes {
-	// 	offset := lastLessThanOrEqualCache[key]
-	// 	if offset == 0 {
-	// 		continue
-	// 	}
-	// 	rec, err := c.readRecord(offset)
-	// 	if err != nil {
-	// 		atomic.StoreUint32(&c.internalState, 1)
-	// 		return 0, err
-	// 	}
-	// 	if rec.Deleted == 0 {
-	// 		rec.Deleted = currentOffset
-	// 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
-	// 	}
-	// }
-
 	c.dirtyLock.Lock()
 	for _, dirtyRec := range c.dirty {
 		walEntry.Push(newWALRecord(dirtyRec.Offset, dirtyRec.recordHeader.bytes()))
@@ -636,7 +622,9 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
+		rec.lock.Lock()
 		rec.Deleted = currentOffset
+		rec.lock.Unlock()
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
 	}
 
@@ -651,7 +639,9 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 				return 0, err
 			}
 		}
+		rec.lock.Lock()
 		rec.Deleted = currentOffset
+		rec.lock.Unlock()
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
 	}
 
@@ -718,6 +708,7 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 	}
 
 	// write file header
+	c.fileHeader.Version = fileVersion
 	c.fileHeader.Next[0] = 0
 	c.fileHeader.LastCommit = int64(8 * 2)
 	c.f.Seek(0, 0)
