@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"sort"
@@ -17,8 +16,8 @@ const sentinelMagic = 0xDEAD10CC
 
 const (
 	maxLevels = 4
-	levelProb = 0.5
-	cacheProb = 0.01
+	levelProb = 0.1
+	cacheProb = 0.1
 )
 
 var (
@@ -41,78 +40,14 @@ type recordCache struct {
 	updatesSinceSave int
 
 	f *os.File
-
-	c *Collection
 }
 
-func newCache(size int, file string) (*recordCache, error) {
-	f, err := os.OpenFile(file, os.O_CREATE|os.O_RDWR, 0666)
-	if err != nil {
-		return nil, err
-	}
-	err = f.Truncate(0)
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
+func newCache(size int) (*recordCache, error) {
 	return &recordCache{
 		cache:        map[int64]*record{},
 		maxKeyRecord: nil,
 		size:         size,
-		f:            f,
 	}, nil
-}
-
-func openCache(size int, file string) (*recordCache, error) {
-	f, err := os.OpenFile(file, os.O_RDWR, 0666)
-	if err != nil {
-		return nil, err
-	}
-
-	return &recordCache{
-		cache:        map[int64]*record{},
-		maxKeyRecord: nil,
-		size:         size,
-		f:            f,
-	}, nil
-}
-
-func (rc *recordCache) reload() {
-	numRecords := 0
-	b, err := ioutil.ReadAll(rc.f)
-	maxNumRecords := len(b) / 8
-	if err != nil {
-		rc.f.Truncate(int64(maxNumRecords * 8))
-		return
-	}
-	buf := bytes.NewReader(b)
-	for i := 0; i < maxNumRecords; i++ {
-		offset := int64(0)
-		err = binary.Read(buf, binary.LittleEndian, &offset)
-		if err != nil {
-			break
-		}
-
-		rec, err := rc.c.readRecord(offset)
-		if err != nil {
-			break
-		}
-
-		rc.push(rec)
-
-		numRecords++
-	}
-
-	rc.f.Truncate(int64(numRecords * 8))
-}
-
-func (rc *recordCache) close() {
-	rc.f.Close()
-}
-
-func (rc *recordCache) destroy() error {
-	rc.close()
-	return os.Remove(rc.f.Name())
 }
 
 func (rc *recordCache) findLastLessThan(key string) int64 {
@@ -359,7 +294,9 @@ func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.cache.push(rec)
+	if level >= 2 {
+		c.cache.push(rec)
+	}
 	return nextRec, nil
 }
 
@@ -695,7 +632,7 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 		f.Close()
 		return nil, err
 	}
-	cache, err := newCache(cacheSize, file+".cache")
+	cache, err := newCache(cacheSize)
 	if err != nil {
 		f.Close()
 		wal.Close()
@@ -734,11 +671,14 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	}
 
 	wal, err := openWAL(file + ".wal")
+	if os.IsNotExist(err) {
+		wal, err = newWAL(file + ".wal")
+	}
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("lm2: error WAL: %v", err)
 	}
-	cache, err := openCache(cacheSize, file+".cache")
+	cache, err := newCache(cacheSize)
 	if err != nil {
 		f.Close()
 		wal.Close()
@@ -814,6 +754,7 @@ func (c *Collection) Close() {
 	defer c.metaLock.Unlock()
 	c.f.Close()
 	c.wal.Close()
+	c.wal.Destroy()
 }
 
 // Version returns the last committed version.
