@@ -777,9 +777,5 @@ func (c *Collection) Destroy() error {
 	if err != nil {
 		return err
 	}
-	err = c.wal.Destroy()
-	if err != nil {
-		return err
-	}
 	return nil
 }
