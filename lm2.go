@@ -337,10 +337,11 @@ func (c *Collection) writeSentinel() (int64, error) {
 	return offset + 12, nil
 }
 
-func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, level int) (int64, error) {
+func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, level int, equal bool) (int64, error) {
 	offset := startingOffset
 
-	if c.Next[level] == 0 {
+	headOffset := atomic.LoadInt64(&c.Next[level])
+	if headOffset == 0 {
 		// Empty collection.
 		return 0, nil
 	}
@@ -349,7 +350,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 	var err error
 	if offset == 0 {
 		// read the head
-		rec, err = c.readRecord(c.Next[level])
+		rec, err = c.readRecord(headOffset)
 		if err != nil {
 			return 0, err
 		}
@@ -377,7 +378,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 
 	for rec != nil {
 		rec.lock.RLock()
-		if rec.Key > key {
+		if (!equal && rec.Key == key) || rec.Key > key {
 			rec.lock.RUnlock()
 			break
 		}
@@ -453,7 +454,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 
 		for i := maxLevels - 1; i > level; i-- {
-			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i)
+			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i, true)
 			if err != nil {
 				return 0, err
 			}
@@ -466,7 +467,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 
 		for ; level >= 0; level-- {
-			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[level], level)
+			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[level], level, true)
 			if err != nil {
 				return 0, err
 			}
@@ -545,7 +546,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	for key := range wb.deletes {
 		offset := int64(0)
 		for level := maxLevels - 1; level >= 0; level-- {
-			offset, err = c.findLastLessThanOrEqual(key, offset, level)
+			offset, err = c.findLastLessThanOrEqual(key, offset, level, true)
 			if err != nil {
 				atomic.StoreUint32(&c.internalState, 1)
 				return 0, err
