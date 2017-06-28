@@ -143,16 +143,23 @@ func (c *Cursor) Seek(key string) {
 		return
 	}
 
-	var rec *record
 	var err error
-	c.collection.metaLock.RLock()
-	rec, err = c.collection.readRecord(c.collection.Next[0])
-	c.collection.metaLock.RUnlock()
-	if err != nil {
-		if c.current != nil && atomic.LoadInt64(&c.current.Next[0]) != 0 {
+	offset := int64(0)
+	for level := maxLevels - 1; level >= 0; level-- {
+		offset, err = c.collection.findLastLessThanOrEqual(key, offset, level, false)
+		if err != nil {
 			c.err = err
+			return
 		}
-		c.current = nil
+	}
+	if offset == 0 {
+		c.collection.metaLock.RLock()
+		offset = c.collection.Next[0]
+		c.collection.metaLock.RUnlock()
+	}
+	rec, err := c.collection.readRecord(offset)
+	if err != nil {
+		c.err = err
 		return
 	}
 
