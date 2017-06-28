@@ -748,3 +748,48 @@ func TestSimple(t *testing.T) {
 	}
 	t.Logf("%+v", c.Stats())
 }
+
+func TestLm2Log(t *testing.T) {
+	expected := [][2]string{
+		{"committed", "0"},
+	}
+
+	c, err := NewCollection("/tmp/test_lm2log.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("committed", "0")
+	wb.Delete("prepared")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		} else {
+			t.Logf("got %v => %v", cur.Key(), cur.Value())
+		}
+		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", c.Stats())
+}

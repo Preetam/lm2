@@ -559,6 +559,9 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
 		}
+		if rec.Key != key {
+			continue
+		}
 		rec.lock.Lock()
 		rec.Deleted = currentOffset
 		rec.lock.Unlock()
