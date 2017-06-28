@@ -757,7 +757,10 @@ func (c *Collection) Close() {
 	defer c.metaLock.Unlock()
 	c.f.Close()
 	c.wal.Close()
-	c.wal.Destroy()
+	if atomic.LoadUint32(&c.internalState) == 0 {
+		// Internal state is OK. Safe to delete WAL.
+		c.wal.Destroy()
+	}
 }
 
 // Version returns the last committed version.
