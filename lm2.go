@@ -153,6 +153,9 @@ type Collection struct {
 	internalState uint32
 
 	metaLock sync.RWMutex
+
+	readAt  func(b []byte, off int64) (n int, err error)
+	writeAt func(b []byte, off int64) (n int, err error)
 }
 
 type fileHeader struct {
@@ -244,7 +247,7 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	c.cache.lock.RUnlock()
 
 	recordHeaderBytes := [recordHeaderSize]byte{}
-	n, err := c.f.ReadAt(recordHeaderBytes[:], offset)
+	n, err := c.readAt(recordHeaderBytes[:], offset)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +262,7 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	}
 
 	keyValBuf := make([]byte, int(header.KeyLen)+int(header.ValLen))
-	n, err = c.f.ReadAt(keyValBuf, offset+recordHeaderSize)
+	n, err = c.readAt(keyValBuf, offset+recordHeaderSize)
 	if err != nil {
 		return nil, err
 	}
@@ -598,7 +601,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 	// Update + fsync data file header.
 	for _, walRec := range walEntry.records {
-		n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+		n, err := c.writeAt(walRec.Data, walRec.Offset)
 		if err != nil {
 			atomic.StoreUint32(&c.internalState, 1)
 			return 0, err
@@ -643,9 +646,11 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 		return nil, err
 	}
 	c := &Collection{
-		f:     f,
-		wal:   wal,
-		cache: cache,
+		f:       f,
+		wal:     wal,
+		cache:   cache,
+		readAt:  f.ReadAt,
+		writeAt: f.WriteAt,
 	}
 
 	// write file header
@@ -689,9 +694,11 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 		return nil, err
 	}
 	c := &Collection{
-		f:     f,
-		wal:   wal,
-		cache: cache,
+		f:       f,
+		wal:     wal,
+		cache:   cache,
+		readAt:  f.ReadAt,
+		writeAt: f.WriteAt,
 	}
 
 	// Read file header.
@@ -711,7 +718,7 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	} else {
 		// Apply last WAL entry again.
 		for _, walRec := range lastEntry.records {
-			n, err := c.f.WriteAt(walRec.Data, walRec.Offset)
+			n, err := c.writeAt(walRec.Data, walRec.Offset)
 			if err != nil {
 				c.Close()
 				return nil, err
