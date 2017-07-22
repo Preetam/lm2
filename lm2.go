@@ -375,6 +375,9 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 // Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
 // It returns the new version (on success) and an error.
 func (c *Collection) Update(wb *WriteBatch) (int64, error) {
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+
 	if atomic.LoadUint32(&c.internalState) != 0 {
 		return 0, ErrInternal
 	}
