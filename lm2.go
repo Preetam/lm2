@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"sort"
@@ -227,12 +228,9 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	c.cache.lock.RUnlock()
 
 	recordHeaderBytes := [recordHeaderSize]byte{}
-	n, err := c.readAt(recordHeaderBytes[:], offset)
+	_, err := c.readAt(recordHeaderBytes[:], offset)
 	if err != nil {
-		return nil, err
-	}
-	if n != recordHeaderSize {
-		return nil, errors.New("lm2: partial read")
+		return nil, fmt.Errorf("lm2: partial read (%s)", err)
 	}
 
 	header := recordHeader{}
@@ -242,12 +240,9 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	}
 
 	keyValBuf := make([]byte, int(header.KeyLen)+int(header.ValLen))
-	n, err = c.readAt(keyValBuf, offset+recordHeaderSize)
+	_, err = c.readAt(keyValBuf, offset+recordHeaderSize)
 	if err != nil {
-		return nil, err
-	}
-	if n != len(keyValBuf) {
-		return nil, errors.New("lm2: partial read")
+		return nil, fmt.Errorf("lm2: partial read (%s)", err)
 	}
 
 	key := string(keyValBuf[:int(header.KeyLen)])
@@ -495,14 +490,10 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		}
 	}
 
-	n, err := c.f.Write(appendBuf.Bytes())
+	_, err = io.Copy(c.f, appendBuf)
 	if err != nil {
 		atomic.StoreUint32(&c.internalState, 1)
-		return 0, errors.New("lm2: appending records failed")
-	}
-	if n != appendBuf.Len() {
-		atomic.StoreUint32(&c.internalState, 1)
-		return 0, errors.New("lm2: partial write")
+		return 0, fmt.Errorf("lm2: appending records failed (%s)", err)
 	}
 
 	// Write sentinel record.
@@ -581,14 +572,10 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 
 	// Update + fsync data file header.
 	for _, walRec := range walEntry.records {
-		n, err := c.writeAt(walRec.Data, walRec.Offset)
+		_, err := c.writeAt(walRec.Data, walRec.Offset)
 		if err != nil {
 			atomic.StoreUint32(&c.internalState, 1)
-			return 0, err
-		}
-		if int64(n) != walRec.Size {
-			atomic.StoreUint32(&c.internalState, 1)
-			return 0, errors.New("lm2: incomplete data write")
+			return 0, fmt.Errorf("lm2: partial write (%s)", err)
 		}
 	}
 
@@ -702,14 +689,10 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	} else {
 		// Apply last WAL entry again.
 		for _, walRec := range lastEntry.records {
-			n, err := c.writeAt(walRec.Data, walRec.Offset)
+			_, err := c.writeAt(walRec.Data, walRec.Offset)
 			if err != nil {
 				c.Close()
-				return nil, err
-			}
-			if int64(n) != walRec.Size {
-				c.Close()
-				return nil, errors.New("lm2: incomplete data write")
+				return nil, fmt.Errorf("lm2: partial write (%s)", err)
 			}
 		}
 
