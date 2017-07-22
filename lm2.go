@@ -32,22 +32,19 @@ var (
 )
 
 type recordCache struct {
-	cache            map[int64]*record
-	maxKeyRecord     *record
-	size             int
-	preventPurge     bool
-	lock             sync.RWMutex
-	updatesSinceSave int
-
-	f *os.File
+	cache        map[int64]*record
+	maxKeyRecord *record
+	size         int
+	preventPurge bool
+	lock         sync.RWMutex
 }
 
-func newCache(size int) (*recordCache, error) {
+func newCache(size int) *recordCache {
 	return &recordCache{
 		cache:        map[int64]*record{},
 		maxKeyRecord: nil,
 		size:         size,
-	}, nil
+	}
 }
 
 func (rc *recordCache) findLastLessThan(key string) int64 {
@@ -98,26 +95,11 @@ func (rc *recordCache) push(rec *record) {
 	rc.lock.Lock()
 
 	rc.cache[rec.Offset] = rec
-	rc.updatesSinceSave++
 	if !rc.preventPurge {
 		rc.purge()
 	}
 
 	rc.lock.Unlock()
-}
-
-func (rc *recordCache) save() {
-	_, err := rc.f.Seek(0, 0)
-	if err != nil {
-		return
-	}
-	b := bytes.NewBuffer(make([]byte, 0, rc.size))
-	for offset := range rc.cache {
-		binary.Write(b, binary.LittleEndian, offset)
-	}
-	rc.f.Write(b.Bytes())
-	rc.f.Sync()
-	rc.updatesSinceSave = 0
 }
 
 func (rc *recordCache) purge() {
@@ -134,9 +116,6 @@ func (rc *recordCache) purge() {
 		delete(rc.cache, deletedKey)
 		purged++
 	}
-	if rc.updatesSinceSave > 4*rc.size {
-		rc.save()
-	}
 }
 
 // Collection represents an ordered linked list map.
@@ -152,7 +131,8 @@ type Collection struct {
 	// internalState is 0 if OK, 1 if inconsistent.
 	internalState uint32
 
-	metaLock sync.RWMutex
+	metaLock  sync.RWMutex
+	writeLock sync.Mutex
 
 	readAt  func(b []byte, off int64) (n int, err error)
 	writeAt func(b []byte, off int64) (n int, err error)
@@ -639,16 +619,10 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 		f.Close()
 		return nil, err
 	}
-	cache, err := newCache(cacheSize)
-	if err != nil {
-		f.Close()
-		wal.Close()
-		return nil, err
-	}
 	c := &Collection{
 		f:       f,
 		wal:     wal,
-		cache:   cache,
+		cache:   newCache(cacheSize),
 		readAt:  f.ReadAt,
 		writeAt: f.WriteAt,
 	}
@@ -674,9 +648,24 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 	f, err := os.OpenFile(file, os.O_RDWR, 0666)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Check if there's a compacted version.
+			if _, err = os.Stat(file + ".compact"); err == nil {
+				// There is.
+				err = os.Rename(file+".compact", file)
+				if err != nil {
+					return nil, fmt.Errorf("lm2: error recovering compacted data file: %v", err)
+				}
+				return OpenCollection(file, cacheSize)
+			}
 			return nil, ErrDoesNotExist
 		}
 		return nil, fmt.Errorf("lm2: error opening data file: %v", err)
+	}
+	// Check if there's a compacted version.
+	if _, err = os.Stat(file + ".compact"); err == nil {
+		// There is. Remove it and its wal.
+		os.Remove(file + ".compact")
+		os.Remove(file + ".compact.wal")
 	}
 
 	wal, err := openWAL(file + ".wal")
@@ -687,16 +676,11 @@ func OpenCollection(file string, cacheSize int) (*Collection, error) {
 		f.Close()
 		return nil, fmt.Errorf("lm2: error WAL: %v", err)
 	}
-	cache, err := newCache(cacheSize)
-	if err != nil {
-		f.Close()
-		wal.Close()
-		return nil, err
-	}
+
 	c := &Collection{
 		f:       f,
 		wal:     wal,
-		cache:   cache,
+		cache:   newCache(cacheSize),
 		readAt:  f.ReadAt,
 		writeAt: f.WriteAt,
 	}
@@ -769,6 +753,7 @@ func (c *Collection) Close() {
 		// Internal state is OK. Safe to delete WAL.
 		c.wal.Destroy()
 	}
+	atomic.StoreUint32(&c.internalState, 1)
 }
 
 // Version returns the last committed version.
@@ -792,4 +777,63 @@ func (c *Collection) Destroy() error {
 		return err
 	}
 	return nil
+}
+
+// Compact rewrites a collection to clean up deleted records and optimize
+// data layout on disk.
+// NOTE: The collection is closed after compaction, so you'll have to reopen it.
+func (c *Collection) Compact() error {
+	return c.CompactFunc(func(key, value string) (string, string, bool) {
+		return key, value, true
+	})
+}
+
+// CompactFunc compacts with a custom compaction function. f is called with
+// each key-value pair, and it should return the new key and value for that record
+// if they should be changed, and whether to keep the record.
+// Returning false will skip the record.
+// NOTE: The collection is closed after compaction, so you'll have to reopen it.
+func (c *Collection) CompactFunc(f func(key, value string) (string, string, bool)) error {
+	c.writeLock.Lock()
+	defer c.writeLock.Unlock()
+	newCollection, err := NewCollection(c.f.Name()+".compact", 10)
+	if err != nil {
+		return err
+	}
+	cur, err := c.NewCursor()
+	if err != nil {
+		return err
+	}
+	const batchSize = 1000
+	remaining := batchSize
+	wb := NewWriteBatch()
+	for cur.Next() {
+		key, val, keep := f(cur.Key(), cur.Value())
+		if !keep {
+			continue
+		}
+		wb.Set(key, val)
+		remaining--
+
+		if remaining == 0 {
+			_, err := newCollection.Update(wb)
+			if err != nil {
+				return err
+			}
+			remaining = batchSize
+			wb = NewWriteBatch()
+		}
+	}
+	if remaining < batchSize {
+		_, err := newCollection.Update(wb)
+		if err != nil {
+			return err
+		}
+	}
+	err = c.Destroy()
+	if err != nil {
+		return err
+	}
+	newCollection.Close()
+	return os.Rename(newCollection.f.Name(), c.f.Name())
 }
