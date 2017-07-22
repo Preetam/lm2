@@ -793,3 +793,206 @@ func TestLm2Log(t *testing.T) {
 	}
 	t.Logf("%+v", c.Stats())
 }
+
+func TestCompact(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "a"},
+		{"key2", "2"},
+		{"key3", "c"},
+	}
+
+	c, err := NewCollection("/tmp/test_compact.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb := NewWriteBatch()
+	wb.Set("key2", "2")
+	t.Log("Set", "key2", "2")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "1")
+	t.Log("Set", "key1", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key3", "3")
+	t.Log("Set", "key3", "3")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "a")
+	t.Log("Set", "key1", "a")
+	wb.Set("key3", "c")
+	t.Log("Set", "key3", "c")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	err = c.Compact()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, err = OpenCollection("/tmp/test_compact.lm2", 100)
+	defer c.Destroy()
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		} else {
+			t.Logf("got %v => %v", cur.Key(), cur.Value())
+		}
+		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", c.Stats())
+}
+
+func TestCopyCompact(t *testing.T) {
+	c, err := NewCollection("/tmp/test_copycompact.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const N = 1000
+	firstWriteStart := time.Now()
+	for i := 0; i < N; i++ {
+		key := fmt.Sprintf("%019d-%019d-%019d-%019d-%019d-%019d-%019d-%019d",
+			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63(),
+			rand.Int63(), rand.Int63(), rand.Int63(), rand.Int63())
+		val := fmt.Sprint(i)
+		wb := NewWriteBatch()
+		wb.Set(key, val)
+		if _, err := c.Update(wb); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
+	verifyOrder(t, c)
+
+	compactStart := time.Now()
+	err = c.Compact()
+	if err != nil {
+		c.Destroy()
+		t.Fatal(err)
+	}
+	t.Log("Compact time:", time.Now().Sub(compactStart))
+
+	c, err = OpenCollection("/tmp/test_copycompact.lm2", 100)
+	defer c.Destroy()
+
+	count := verifyOrder(t, c)
+	if count != N {
+		t.Error("expected count", N, "got", count)
+	}
+}
+
+func TestCompactSkipKey(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "a"},
+		{"key3", "c"},
+	}
+
+	c, err := NewCollection("/tmp/test_compactskip.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb := NewWriteBatch()
+	wb.Set("key2", "2")
+	t.Log("Set", "key2", "2")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "1")
+	t.Log("Set", "key1", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key3", "3")
+	t.Log("Set", "key3", "3")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("key1", "a")
+	t.Log("Set", "key1", "a")
+	wb.Set("key3", "c")
+	t.Log("Set", "key3", "c")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c)
+
+	err = c.CompactFunc(func(key, val string) (string, string, bool) {
+		if key == "key2" {
+			return "", "", false
+		}
+		return key, val, true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c, err = OpenCollection("/tmp/test_compactskip.lm2", 100)
+	defer c.Destroy()
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		} else {
+			t.Logf("got %v => %v", cur.Key(), cur.Value())
+		}
+		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", c.Stats())
+}
