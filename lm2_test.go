@@ -1,6 +1,7 @@
 package lm2
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -34,6 +35,13 @@ func TestCopy(t *testing.T) {
 	}
 	defer c.Destroy()
 
+	c.readAt = func(b []byte, off int64) (int, error) {
+		if rand.Float64() <= 0.001 {
+			return 0, errors.New("random failure")
+		}
+		return c.f.ReadAt(b, off)
+	}
+
 	const N = 1000
 	firstWriteStart := time.Now()
 	for i := 0; i < N; i++ {
@@ -43,7 +51,12 @@ func TestCopy(t *testing.T) {
 		val := fmt.Sprint(i)
 		wb := NewWriteBatch()
 		wb.Set(key, val)
+	RETRY:
 		if _, err := c.Update(wb); err != nil {
+			if err == ErrRolledBack {
+				t.Log("rollback")
+				goto RETRY
+			}
 			t.Fatal(err)
 		}
 	}
@@ -81,8 +94,13 @@ func TestCopy(t *testing.T) {
 		remaining--
 
 		if remaining == 0 {
+		RETRY2:
 			_, err := c2.Update(wb)
 			if err != nil {
+				if err == ErrRolledBack {
+					t.Log("rollback")
+					goto RETRY2
+				}
 				t.Fatal(err)
 			}
 			remaining = batchSize
@@ -91,8 +109,13 @@ func TestCopy(t *testing.T) {
 	}
 
 	if remaining < batchSize {
+	RETRY3:
 		_, err := c2.Update(wb)
 		if err != nil {
+			if err == ErrRolledBack {
+				t.Log("rollback")
+				goto RETRY3
+			}
 			t.Fatal(err)
 		}
 	}

@@ -27,6 +27,8 @@ var (
 	// is invalid. The collection should be closed and reopened.
 	ErrInternal = errors.New("lm2: internal error")
 
+	ErrRolledBack = errors.New("lm2: rolled back")
+
 	fileVersion = [8]byte{'l', 'm', '2', '_', '0', '0', '1', '\n'}
 )
 

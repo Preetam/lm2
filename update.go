@@ -152,7 +152,7 @@ func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 		return 0, errors.New("lm2: couldn't get current file offset")
 	}
 
-	previousFileHeader := fileHeader{}
+	previousFileHeader := c.fileHeader
 	overwrittenRecords := []int64{}
 	startingOffsets := [maxLevels]int64{}
 
@@ -335,7 +335,13 @@ ROLLBACK:
 			atomic.StoreInt64(&c.fileHeader.Next[i], v)
 		}
 		c.f.Truncate(c.LastCommit)
-		return 0, errors.New("lm2: rolled back")
+
+		c.cache.flushOffsets(dirtyOffsets)
+		c.cache.lock.Lock()
+		c.cache.cache = map[int64]*record{}
+		c.cache.lock.Unlock()
+
+		return 0, ErrRolledBack
 	}
 
 	// Update + fsync data file header.
