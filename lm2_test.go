@@ -35,8 +35,10 @@ func TestCopy(t *testing.T) {
 	}
 	defer c.Destroy()
 
+	const failureProbConst = 0.001
+	failureProb := failureProbConst
 	c.readAt = func(b []byte, off int64) (int, error) {
-		if rand.Float64() <= 0.001 {
+		if rand.Float64() <= failureProb {
 			return 0, errors.New("random failure")
 		}
 		return c.f.ReadAt(b, off)
@@ -61,6 +63,7 @@ func TestCopy(t *testing.T) {
 		}
 	}
 	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
+	failureProb = 0
 	verifyOrder(t, c)
 
 	c2, err := NewCollection("/tmp/test_copy_copy.lm2", 100)
@@ -123,6 +126,7 @@ func TestCopy(t *testing.T) {
 	t.Log("Second write pass time:", time.Now().Sub(secondWriteStart))
 
 	firstStart := time.Now()
+	failureProb = 0
 	count1 := verifyOrder(t, c)
 	firstEnd := time.Now()
 	secondStart := firstEnd
