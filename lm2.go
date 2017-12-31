@@ -141,8 +141,8 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	c.cache.lock.RUnlock()
 
 	recordHeaderBytes := [recordHeaderSize]byte{}
-	_, err := c.readAt(recordHeaderBytes[:], offset)
-	if err != nil {
+	n, err := c.readAt(recordHeaderBytes[:], offset)
+	if err != nil && n != recordHeaderSize {
 		return nil, fmt.Errorf("lm2: partial read (%s)", err)
 	}
 
@@ -153,8 +153,8 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	}
 
 	keyValBuf := make([]byte, int(header.KeyLen)+int(header.ValLen))
-	_, err = c.readAt(keyValBuf, offset+recordHeaderSize)
-	if err != nil {
+	n, err = c.readAt(keyValBuf, offset+recordHeaderSize)
+	if err != nil && n != len(keyValBuf) {
 		return nil, fmt.Errorf("lm2: partial read (%s)", err)
 	}
 

@@ -9,12 +9,18 @@ import (
 	"time"
 )
 
-func verifyOrder(t *testing.T, c *Collection) int {
+func verifyOrder(t *testing.T, c *Collection, errLock *sync.Mutex) int {
 	count := 0
 	prev := ""
 	cur, err := c.NewCursor()
 	if err != nil {
+		if errLock != nil {
+			errLock.Lock()
+		}
 		t.Fatal(err)
+		if errLock != nil {
+			errLock.Unlock()
+		}
 	}
 	for cur.Next() {
 		count++
@@ -23,7 +29,13 @@ func verifyOrder(t *testing.T, c *Collection) int {
 		}
 	}
 	if err = cur.Err(); err != nil {
+		if errLock != nil {
+			errLock.Lock()
+		}
 		t.Fatal(err)
+		if errLock != nil {
+			errLock.Unlock()
+		}
 	}
 	return count
 }
@@ -64,7 +76,7 @@ func TestCopy(t *testing.T) {
 	}
 	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
 	failureProb = 0
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	c2, err := NewCollection("/tmp/test_copy_copy.lm2", 100)
 	if err != nil {
@@ -127,10 +139,10 @@ func TestCopy(t *testing.T) {
 
 	firstStart := time.Now()
 	failureProb = 0
-	count1 := verifyOrder(t, c)
+	count1 := verifyOrder(t, c, nil)
 	firstEnd := time.Now()
 	secondStart := firstEnd
-	count2 := verifyOrder(t, c2)
+	count2 := verifyOrder(t, c2, nil)
 	secondEnd := time.Now()
 	t.Log("Time to iterate through first list:", firstEnd.Sub(firstStart), "with", count1, "elements")
 	t.Log("Time to iterate through second list:", secondEnd.Sub(secondStart), "with", count2, "elements")
@@ -167,7 +179,7 @@ func TestWriteBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -207,7 +219,7 @@ func TestWriteBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err = c.NewCursor()
 	if err != nil {
@@ -272,7 +284,7 @@ func TestWriteBatch1(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 }
 
 func TestWriteBatch1Concurrent(t *testing.T) {
@@ -290,6 +302,8 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 	startWG.Add(NumGoroutines)
 	endWG.Add(NumGoroutines)
 
+	errLock := &sync.Mutex{}
+
 	for i := 0; i < NumGoroutines; i++ {
 		go func() {
 			for j := 0; j < N; j++ {
@@ -298,7 +312,9 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 				val := fmt.Sprint(j)
 				wb.Set(key, val)
 				if _, err := c.Update(wb); err != nil {
+					errLock.Lock()
 					t.Fatal(err)
+					errLock.Unlock()
 				}
 				if j == 0 {
 					startWG.Done()
@@ -311,13 +327,15 @@ func TestWriteBatch1Concurrent(t *testing.T) {
 	// Wait for them to start working.
 	startWG.Wait()
 
-	verifyOrder(t, c)
-	verifyOrder(t, c)
+	for i := 0; i < 1000; i++ {
+		verifyOrder(t, c, errLock)
+		time.Sleep(time.Millisecond)
+	}
 
 	// Wait for them to end.
 	endWG.Wait()
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, errLock)
 }
 
 func TestWriteBatch2(t *testing.T) {
@@ -382,7 +400,7 @@ func TestWriteBatch2(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -455,7 +473,7 @@ func TestWriteCloseOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -756,7 +774,7 @@ func TestSimple(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -801,7 +819,7 @@ func TestLm2Log(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {
@@ -873,7 +891,7 @@ func TestCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	err = c.Compact()
 	if err != nil {
@@ -927,7 +945,7 @@ func TestCopyCompact(t *testing.T) {
 		}
 	}
 	t.Log("First write pass time:", time.Now().Sub(firstWriteStart))
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	compactStart := time.Now()
 	err = c.Compact()
@@ -940,7 +958,7 @@ func TestCopyCompact(t *testing.T) {
 	c, err = OpenCollection("/tmp/test_copycompact.lm2", 100)
 	defer c.Destroy()
 
-	count := verifyOrder(t, c)
+	count := verifyOrder(t, c, nil)
 	if count != N {
 		t.Error("expected count", N, "got", count)
 	}
@@ -991,7 +1009,7 @@ func TestCompactSkipKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	err = c.CompactFunc(func(key, val string) (string, string, bool) {
 		if key == "key2" {
@@ -1062,7 +1080,7 @@ func TestDeleteAndUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	verifyOrder(t, c)
+	verifyOrder(t, c, nil)
 
 	cur, err := c.NewCursor()
 	if err != nil {

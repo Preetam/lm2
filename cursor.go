@@ -98,7 +98,7 @@ func (c *Cursor) Next() bool {
 	c.current = rec
 
 	c.current.lock.RLock()
-	for (c.current.Deleted != 0 && c.current.Deleted <= c.snapshot) ||
+	for (atomic.LoadInt64(&c.current.Deleted) != 0 && atomic.LoadInt64(&c.current.Deleted) <= c.snapshot) ||
 		(c.current.Offset >= c.snapshot) {
 		rec, err = c.collection.readRecord(atomic.LoadInt64(&c.current.Next[0]))
 		if err != nil {

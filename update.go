@@ -171,7 +171,8 @@ KEYS_LOOP:
 			Key:    key,
 			Value:  value,
 		}
-
+		c.setDirty(newRecordOffset, rec)
+		dirtyOffsets = append(dirtyOffsets, newRecordOffset)
 		for i := maxLevels - 1; i > level; i-- {
 			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i, true)
 			if err != nil {
@@ -233,8 +234,6 @@ KEYS_LOOP:
 				rollbackErr = err
 				break KEYS_LOOP
 			}
-			c.setDirty(newRecordOffset, rec)
-			dirtyOffsets = append(dirtyOffsets, newRecordOffset)
 		}
 	}
 
@@ -312,7 +311,7 @@ KEYS_LOOP:
 			*rec = *readRec
 			readRec.lock.RUnlock()
 		}
-		rec.Deleted = currentOffset
+		atomic.StoreInt64(&rec.Deleted, currentOffset)
 		c.setDirty(rec.Offset, rec)
 		dirtyOffsets = append(dirtyOffsets, rec.Offset)
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
