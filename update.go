@@ -47,7 +47,7 @@ func (c *Collection) writeSentinel() (int64, error) {
 	return offset + 12, nil
 }
 
-func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, level int, equal bool) (int64, error) {
+func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, level int, equal bool, dirty bool) (int64, error) {
 	offset := startingOffset
 
 	headOffset := atomic.LoadInt64(&c.Next[level])
@@ -60,7 +60,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 	var err error
 	if offset == 0 {
 		// read the head
-		rec, err = c.readRecord(headOffset)
+		rec, err = c.readRecord(headOffset, dirty)
 		if err != nil {
 			return 0, err
 		}
@@ -71,7 +71,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 		if level == maxLevels-1 {
 			cacheResult := c.cache.findLastLessThan(key)
 			if cacheResult != 0 {
-				rec, err = c.readRecord(cacheResult)
+				rec, err = c.readRecord(cacheResult, dirty)
 				if err != nil {
 					return 0, err
 				}
@@ -80,7 +80,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 
 		offset = rec.Offset
 	} else {
-		rec, err = c.readRecord(offset)
+		rec, err = c.readRecord(offset, dirty)
 		if err != nil {
 			return 0, err
 		}
@@ -94,7 +94,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 		}
 		offset = rec.Offset
 		oldRec := rec
-		rec, err = c.nextRecord(oldRec, level)
+		rec, err = c.nextRecord(oldRec, level, dirty)
 		if err != nil {
 			return 0, err
 		}
@@ -174,7 +174,7 @@ KEYS_LOOP:
 		c.setDirty(newRecordOffset, rec)
 		dirtyOffsets = append(dirtyOffsets, newRecordOffset)
 		for i := maxLevels - 1; i > level; i-- {
-			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i, true)
+			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[i], i, true, true)
 			if err != nil {
 				rollbackErr = err
 				break KEYS_LOOP
@@ -188,7 +188,7 @@ KEYS_LOOP:
 		}
 
 		for ; level >= 0; level-- {
-			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[level], level, true)
+			offset, err := c.findLastLessThanOrEqual(key, startingOffsets[level], level, true, true)
 			if err != nil {
 				rollbackErr = err
 				break KEYS_LOOP
@@ -203,7 +203,7 @@ KEYS_LOOP:
 				if prev := c.getDirty(offset); prev != nil {
 					prevRec = prev
 				} else {
-					readRec, err := c.readRecord(offset)
+					readRec, err := c.readRecord(offset, true)
 					if err != nil {
 						rollbackErr = err
 						break KEYS_LOOP
@@ -266,7 +266,7 @@ KEYS_LOOP:
 	for key := range wb.deletes {
 		offset := int64(0)
 		for level := maxLevels - 1; level >= 0; level-- {
-			offset, err = c.findLastLessThanOrEqual(key, offset, level, true)
+			offset, err = c.findLastLessThanOrEqual(key, offset, level, true, true)
 			if err != nil {
 				rollbackErr = err
 				goto ROLLBACK
@@ -279,7 +279,7 @@ KEYS_LOOP:
 		if dirtyRec := c.getDirty(offset); dirtyRec != nil {
 			rec = dirtyRec
 		} else {
-			readRec, err := c.readRecord(offset)
+			readRec, err := c.readRecord(offset, true)
 			if err != nil {
 				rollbackErr = err
 				goto ROLLBACK
@@ -302,7 +302,7 @@ KEYS_LOOP:
 		if dirtyRec := c.getDirty(offset); dirtyRec != nil {
 			rec = dirtyRec
 		} else {
-			readRec, err := c.readRecord(offset)
+			readRec, err := c.readRecord(offset, true)
 			if err != nil {
 				rollbackErr = err
 				goto ROLLBACK

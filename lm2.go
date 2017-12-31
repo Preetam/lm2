@@ -122,13 +122,15 @@ func (c *Collection) setDirty(offset int64, rec *record) {
 	c.dirty[offset] = rec
 }
 
-func (c *Collection) readRecord(offset int64) (*record, error) {
+func (c *Collection) readRecord(offset int64, dirty bool) (*record, error) {
 	if offset == 0 {
 		return nil, errors.New("lm2: invalid record offset 0")
 	}
 
-	if rec := c.getDirty(offset); rec != nil {
-		return rec, nil
+	if dirty {
+		if rec := c.getDirty(offset); rec != nil {
+			return rec, nil
+		}
 	}
 
 	c.cache.lock.RLock()
@@ -173,7 +175,7 @@ func (c *Collection) readRecord(offset int64) (*record, error) {
 	return rec, nil
 }
 
-func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
+func (c *Collection) nextRecord(rec *record, level int, dirty bool) (*record, error) {
 	if rec == nil {
 		return nil, errors.New("lm2: invalid record")
 	}
@@ -181,7 +183,7 @@ func (c *Collection) nextRecord(rec *record, level int) (*record, error) {
 		// There's no next record.
 		return nil, nil
 	}
-	nextRec, err := c.readRecord(atomic.LoadInt64(&rec.Next[level]))
+	nextRec, err := c.readRecord(atomic.LoadInt64(&rec.Next[level]), dirty)
 	if err != nil {
 		return nil, err
 	}
