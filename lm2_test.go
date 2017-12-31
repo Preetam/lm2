@@ -1087,3 +1087,31 @@ func TestDeleteAndUpdate(t *testing.T) {
 	}
 	t.Logf("%+v", c.Stats())
 }
+
+func TestOK(t *testing.T) {
+	c, err := NewCollection("/tmp/test_ok.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	c.writeAt = func(b []byte, offset int64) (int, error) {
+		return 0, errors.New("some failure")
+	}
+
+	wb := NewWriteBatch()
+	wb.Set("key2", "2")
+	t.Log("Set", "key2", "2")
+	_, err = c.Update(wb)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	if c.internalState != 1 {
+		t.Errorf("expected internalState to be 1 but got %d", c.internalState)
+	}
+
+	if c.OK() {
+		t.Error("expected OK() to return false")
+	}
+}

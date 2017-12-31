@@ -423,3 +423,9 @@ func (c *Collection) CompactFunc(f func(key, value string) (string, string, bool
 	newCollection.Close()
 	return os.Rename(newCollection.f.Name(), c.f.Name())
 }
+
+// OK returns true if the internal state of the collection is valid.
+// If false is returned you should close and reopen the collection.
+func (c *Collection) OK() bool {
+	return atomic.LoadUint32(&c.internalState) == 0
+}
