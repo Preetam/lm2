@@ -67,7 +67,7 @@ func TestCopy(t *testing.T) {
 		wb.Set(key, val)
 	RETRY:
 		if _, err := c.Update(wb); err != nil {
-			if err == ErrRolledBack {
+			if IsRollbackError(err) {
 				t.Log("rollback")
 				goto RETRY
 			}
@@ -112,7 +112,7 @@ func TestCopy(t *testing.T) {
 		RETRY2:
 			_, err := c2.Update(wb)
 			if err != nil {
-				if err == ErrRolledBack {
+				if IsRollbackError(err) {
 					t.Log("rollback")
 					goto RETRY2
 				}
@@ -127,7 +127,7 @@ func TestCopy(t *testing.T) {
 	RETRY3:
 		_, err := c2.Update(wb)
 		if err != nil {
-			if err == ErrRolledBack {
+			if IsRollbackError(err) {
 				t.Log("rollback")
 				goto RETRY3
 			}
@@ -1131,5 +1131,48 @@ func TestOK(t *testing.T) {
 
 	if c.OK() {
 		t.Error("expected OK() to return false")
+	}
+}
+
+func TestConflictRollback(t *testing.T) {
+	c, err := NewCollection("/tmp/test_conflictrollback.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("key1", "1")
+	t.Log("Set", "key1", "1")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.AllowOverwrite(false)
+	wb.Set("key1", "2")
+	t.Log("Set", "key1", "2")
+	_, err = c.Update(wb)
+	if err == nil {
+		t.Fatal("expected a rollback")
+	}
+
+	if !IsRollbackError(err) {
+		t.Fatal("expected a rollback error")
+	}
+
+	rollbackErr := err.(RollbackError)
+	if !rollbackErr.DuplicateKey {
+		t.Error("expected DuplicateKey to be true")
+	}
+
+	if rollbackErr.ConflictedKey != "key1" {
+		t.Errorf("expected ConflictedKey to be `%s`, got `%s`",
+			"key1", rollbackErr.ConflictedKey)
+	}
+
+	if !c.OK() {
+		t.Error("expected OK() to return true")
 	}
 }

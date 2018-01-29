@@ -27,10 +27,29 @@ var (
 	// is invalid. The collection should be closed and reopened.
 	ErrInternal = errors.New("lm2: internal error")
 
-	ErrRolledBack = errors.New("lm2: rolled back")
-
 	fileVersion = [8]byte{'l', 'm', '2', '_', '0', '0', '1', '\n'}
 )
+
+// RollbackError is the error type returned after rollbacks.
+type RollbackError struct {
+	DuplicateKey  bool
+	ConflictedKey string
+	Err           error
+}
+
+func (e RollbackError) Error() string {
+	if e.DuplicateKey {
+		return fmt.Sprintf("lm2: rolled back due to duplicate key (conflicted key: `%s`)",
+			e.ConflictedKey)
+	}
+	return fmt.Sprintf("lm2: rolled back (%s)", e.Err.Error())
+}
+
+// IsRollbackError returns true if err is a RollbackError.
+func IsRollbackError(err error) bool {
+	_, ok := err.(RollbackError)
+	return ok
+}
 
 // Collection represents an ordered linked list map.
 type Collection struct {

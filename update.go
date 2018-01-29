@@ -106,6 +106,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 
 // Update atomically and durably applies a WriteBatch (a set of updates) to the collection.
 // It returns the new version (on success) and an error.
+// The error may be a RollbackError; use IsRollbackError to check.
 func (c *Collection) Update(wb *WriteBatch) (int64, error) {
 	c.writeLock.Lock()
 	defer c.writeLock.Unlock()
@@ -219,6 +220,13 @@ KEYS_LOOP:
 				walEntry.Push(newWALRecord(prevRec.Offset, prevRec.recordHeader.bytes()))
 
 				if prevRec.Key == key && prevRec.Deleted == 0 {
+					if !wb.allowOverwrite {
+						rollbackErr = RollbackError{
+							DuplicateKey:  true,
+							ConflictedKey: key,
+						}
+						goto ROLLBACK
+					}
 					overwrittenRecords = append(overwrittenRecords, prevRec.Offset)
 				}
 
@@ -340,7 +348,12 @@ ROLLBACK:
 		c.cache.cache = map[int64]*record{}
 		c.cache.lock.Unlock()
 
-		return 0, ErrRolledBack
+		if IsRollbackError(rollbackErr) {
+			return 0, rollbackErr
+		}
+		return 0, RollbackError{
+			Err: rollbackErr,
+		}
 	}
 
 	// Update + fsync data file header.
