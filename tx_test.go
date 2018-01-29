@@ -169,7 +169,7 @@ func TestTransactionalSquares(t *testing.T) {
 					return nil
 				})
 				if err != nil {
-					if err != ErrRolledBack && err.Error() != "lm2: partial read (random failure)" {
+					if !IsRollbackError(err) && err.Error() != "lm2: partial read (random failure)" {
 						t.Fatal(err)
 					} else {
 						atomic.AddUint32(&expectedWriteFailures, 1)
