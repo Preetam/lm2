@@ -223,3 +223,21 @@ func (c *Cursor) Seek(key string) {
 func (c *Cursor) Err() error {
 	return c.err
 }
+
+// Get gets a single key using the cursor. This is just a helper function
+// that seeks and finds a key for you.
+func (c *Cursor) Get(key string) (string, error) {
+	c.Seek(key)
+	for c.Next() {
+		if c.Key() > key {
+			break
+		}
+		if c.Key() == key {
+			return c.Value(), nil
+		}
+	}
+	if err := c.Err(); err != nil {
+		return "", err
+	}
+	return "", ErrKeyNotFound
+}

@@ -26,6 +26,9 @@ var (
 	// ErrInternal is returned when the internal state of the collection
 	// is invalid. The collection should be closed and reopened.
 	ErrInternal = errors.New("lm2: internal error")
+	// ErrKeyNotFound is returned when a Cursor.Get() doesn't find
+	// the requested key.
+	ErrKeyNotFound = errors.New("lm2: key not found")
 
 	fileVersion = [8]byte{'l', 'm', '2', '_', '0', '0', '1', '\n'}
 )
