@@ -1228,4 +1228,9 @@ func TestCursorGet(t *testing.T) {
 	if key4Val != "4" {
 		t.Fatalf("expected key4Val to be %s but got %s", "4", key4Val)
 	}
+
+	_, err = cur.Get("missing")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound but got %v", err)
+	}
 }

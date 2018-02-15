@@ -225,7 +225,8 @@ func (c *Cursor) Err() error {
 }
 
 // Get gets a single key using the cursor. This is just a helper function
-// that seeks and finds a key for you.
+// that seeks and finds a key for you. ErrKeyNotFound is returned as the error
+// when the key is not found.
 func (c *Cursor) Get(key string) (string, error) {
 	c.Seek(key)
 	for c.Next() {
