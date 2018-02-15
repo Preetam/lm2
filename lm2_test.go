@@ -1176,3 +1176,61 @@ func TestConflictRollback(t *testing.T) {
 		t.Error("expected OK() to return true")
 	}
 }
+
+func TestCursorGet(t *testing.T) {
+	c, err := NewCollection("/tmp/test_cursorget.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("key1", "1")
+	wb.Set("key2", "2")
+	wb.Set("key3", "3")
+	wb.Set("key4", "4")
+
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyOrder(t, c, nil)
+
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key2Val, err := cur.Get("key2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key2Val != "2" {
+		t.Fatalf("expected key2Val to be %s but got %s", "2", key2Val)
+	}
+
+	key1Val, err := cur.Get("key1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key1Val != "1" {
+		t.Fatalf("expected key1Val to be %s but got %s", "1", key1Val)
+	}
+
+	key4Val, err := cur.Get("key4")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if key4Val != "4" {
+		t.Fatalf("expected key4Val to be %s but got %s", "4", key4Val)
+	}
+
+	_, err = cur.Get("missing")
+	if err != ErrKeyNotFound {
+		t.Fatalf("expected ErrKeyNotFound but got %v", err)
+	}
+}
