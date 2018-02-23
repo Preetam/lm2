@@ -193,7 +193,7 @@ func (c *Collection) readRecord(offset int64, dirty bool) (*record, error) {
 	}
 	c.stats.incRecordsRead(1)
 	c.stats.incCacheMisses(1)
-
+	c.cache.push(rec)
 	return rec, nil
 }
 
@@ -208,9 +208,6 @@ func (c *Collection) nextRecord(rec *record, level int, dirty bool) (*record, er
 	nextRec, err := c.readRecord(atomic.LoadInt64(&rec.Next[level]), dirty)
 	if err != nil {
 		return nil, err
-	}
-	if level >= 2 {
-		c.cache.push(rec)
 	}
 	return nextRec, nil
 }
