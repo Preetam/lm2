@@ -15,3 +15,9 @@ You will have to rewrite a collection to reclaim space.
 License
 ---
 BSD (see LICENSE)
+
+Projects that use the Rig
+---
+* [Transverse](https://www.transverseapp.com/) uses lm2 to store metadata, and uses lm2 through the
+[Rig](https://github.com/Preetam/rig) for synchronous replication.
+* [Cistern](https://github.com/Cistern/cistern) uses lm2 for storing events.
