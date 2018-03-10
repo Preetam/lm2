@@ -16,7 +16,7 @@ License
 ---
 BSD (see LICENSE)
 
-Projects that use the Rig
+Projects that use lm2
 ---
 * [Transverse](https://www.transverseapp.com/) uses lm2 to store metadata, and uses lm2 through the
 [Rig](https://github.com/Preetam/rig) for synchronous replication.
