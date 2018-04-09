@@ -299,6 +299,9 @@ KEYS_LOOP:
 		if rec.Key != key {
 			continue
 		}
+		if rec.Deleted != 0 {
+			continue
+		}
 		rec.Deleted = currentOffset
 		c.setDirty(rec.Offset, rec)
 		dirtyOffsets = append(dirtyOffsets, rec.Offset)

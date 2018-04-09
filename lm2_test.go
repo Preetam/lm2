@@ -10,8 +10,6 @@ import (
 )
 
 func verifyOrder(t *testing.T, c *Collection, errLock *sync.Mutex) int {
-	count := 0
-	prev := ""
 	cur, err := c.NewCursor()
 	if err != nil {
 		if errLock != nil {
@@ -22,13 +20,19 @@ func verifyOrder(t *testing.T, c *Collection, errLock *sync.Mutex) int {
 			errLock.Unlock()
 		}
 	}
+	return verifyOrderWithCursor(t, cur, errLock)
+}
+
+func verifyOrderWithCursor(t *testing.T, cur *Cursor, errLock *sync.Mutex) int {
+	prev := ""
+	count := 0
 	for cur.Next() {
 		count++
 		if cur.Key() < prev {
 			t.Errorf("key %v greater than previous key %v", cur.Key(), prev)
 		}
 	}
-	if err = cur.Err(); err != nil {
+	if err := cur.Err(); err != nil {
 		if errLock != nil {
 			errLock.Lock()
 		}
@@ -1233,4 +1237,65 @@ func TestCursorGet(t *testing.T) {
 	if err != ErrKeyNotFound {
 		t.Fatalf("expected ErrKeyNotFound but got %v", err)
 	}
+}
+
+func TestDeleteDeleted(t *testing.T) {
+	c, err := NewCollection("/tmp/test_deletedeleted.lm2", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("a", "")
+	wb.Set("z", "")
+	t.Log("Set", "a")
+	t.Log("Set", "z")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Set("b", "")
+	wb.Set("c", "")
+	wb.Set("d", "")
+	wb.Delete("a")
+	wb.Delete("z")
+	t.Log("Set", "b")
+	t.Log("Set", "c")
+	t.Log("Set", "d")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a cursor
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.Delete("z")
+	t.Log("Delete", "z")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const expectedKeys = 3
+	observedKeys := 0
+	for cur.Next() {
+		observedKeys++
+		t.Log(cur.Key())
+	}
+
+	verifyOrderWithCursor(t, cur, nil)
+
+	if observedKeys != expectedKeys {
+		t.Errorf("expected %d keys but got %d", expectedKeys, observedKeys)
+	}
+
+	t.Logf("%+v", c.Stats())
 }
