@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"sync/atomic"
 )
 
@@ -359,13 +360,46 @@ ROLLBACK:
 		}
 	}
 
+	const parallelism = 16
+	work := make(chan walRecord, parallelism)
+	workErr := make(chan error, parallelism)
+	wg := sync.WaitGroup{}
+	wg.Add(parallelism)
+
+	for i := 0; i < parallelism; i++ {
+		go func() {
+			defer wg.Done()
+			for rec := range work {
+				_, err := c.writeAt(rec.Data, rec.Offset)
+				if err != nil {
+					workErr <- err
+					return
+				}
+			}
+		}()
+	}
+
+	dedupedRecords := map[int64]walRecord{}
+	for _, walRecord := range walEntry.records {
+		dedupedRecords[walRecord.Offset] = walRecord
+	}
+
 	// Update + fsync data file header.
-	for _, walRec := range walEntry.records {
-		_, err := c.writeAt(walRec.Data, walRec.Offset)
-		if err != nil {
+	for _, walRec := range dedupedRecords {
+		select {
+		case err := <-workErr:
 			atomic.StoreUint32(&c.internalState, 1)
 			return 0, fmt.Errorf("lm2: partial write (%s)", err)
+		case work <- walRec:
 		}
+	}
+	close(work)
+	wg.Wait()
+	select {
+	case err := <-workErr:
+		atomic.StoreUint32(&c.internalState, 1)
+		return 0, fmt.Errorf("lm2: partial write (%s)", err)
+	default:
 	}
 
 	err = c.f.Sync()
