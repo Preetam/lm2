@@ -368,14 +368,15 @@ ROLLBACK:
 
 	for i := 0; i < parallelism; i++ {
 		go func() {
-			defer wg.Done()
 			for rec := range work {
 				_, err := c.writeAt(rec.Data, rec.Offset)
 				if err != nil {
 					workErr <- err
+					wg.Done()
 					return
 				}
 			}
+			wg.Done()
 		}()
 	}
 
