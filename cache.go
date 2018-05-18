@@ -60,7 +60,7 @@ func (rc *recordCache) push(rec *record) {
 		return
 	}
 
-	if len(rc.cache) == rc.size && rand.Float32() >= cacheProb {
+	if len(rc.cache) == rc.size && rand.Float32() >= cacheProb/float32(len(rec.Next)) {
 		rc.lock.RUnlock()
 		return
 	}
