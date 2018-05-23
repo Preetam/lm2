@@ -249,6 +249,12 @@ func NewCollection(file string, cacheSize int) (*Collection, error) {
 		c.wal.Close()
 		return nil, err
 	}
+	err = c.f.Truncate(c.LastCommit)
+	if err != nil {
+		c.f.Close()
+		c.wal.Close()
+		return nil, err
+	}
 	return c, nil
 }
 
