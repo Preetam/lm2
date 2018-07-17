@@ -4,5 +4,5 @@ jobs:
     working_directory: /go/src/github.com/Preetam/lm2
     docker:
       - image: golang:1.10
-  steps:
-    - run: go test -v -race
+    steps:
+      - run: go test -v -race
