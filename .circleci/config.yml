@@ -5,4 +5,5 @@ jobs:
     docker:
       - image: golang:1.10
     steps:
+      - checkout
       - run: go test -v -race
