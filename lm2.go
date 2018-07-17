@@ -113,8 +113,6 @@ type record struct {
 	Offset int64
 	Key    string
 	Value  string
-
-	lock sync.RWMutex
 }
 
 func generateLevel() int {

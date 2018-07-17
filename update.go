@@ -87,9 +87,7 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 	}
 
 	for rec != nil {
-		rec.lock.RLock()
 		if (!equal && rec.Key == key) || rec.Key > key {
-			rec.lock.RUnlock()
 			break
 		}
 		offset = rec.Offset
@@ -98,7 +96,6 @@ func (c *Collection) findLastLessThanOrEqual(key string, startingOffset int64, l
 		if err != nil {
 			return 0, err
 		}
-		oldRec.lock.RUnlock()
 	}
 
 	return offset, nil
@@ -209,9 +206,7 @@ KEYS_LOOP:
 						rollbackErr = err
 						break KEYS_LOOP
 					}
-					readRec.lock.RLock()
 					*prevRec = *readRec
-					readRec.lock.RUnlock()
 				}
 				atomic.StoreInt64(&rec.Next[level], prevRec.Next[level])
 				atomic.StoreInt64(&prevRec.Next[level], newRecordOffset)
@@ -292,9 +287,7 @@ KEYS_LOOP:
 				rollbackErr = err
 				goto ROLLBACK
 			}
-			readRec.lock.RLock()
 			*rec = *readRec
-			readRec.lock.RUnlock()
 		}
 		if rec.Key != key {
 			continue
@@ -318,9 +311,7 @@ KEYS_LOOP:
 				rollbackErr = err
 				goto ROLLBACK
 			}
-			readRec.lock.RLock()
 			*rec = *readRec
-			readRec.lock.RUnlock()
 		}
 		atomic.StoreInt64(&rec.Deleted, currentOffset)
 		c.setDirty(rec.Offset, rec)
