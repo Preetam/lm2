@@ -1299,3 +1299,60 @@ func TestDeleteDeleted(t *testing.T) {
 
 	t.Logf("%+v", c.Stats())
 }
+
+func TestSecureDelete(t *testing.T) {
+	expected := [][2]string{
+		{"key1", "1"},
+		{"key2", "\x00"},
+		{"key3", "3"},
+	}
+
+	c, err := NewCollection("/tmp/test_securedelete.lm2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Destroy()
+
+	wb := NewWriteBatch()
+	wb.Set("key1", "1")
+	wb.Set("key2", "2")
+	wb.Set("key3", "3")
+	t.Log("Set", "key1", "1")
+	t.Log("Set", "key2", "2")
+	t.Log("Set", "key3", "3")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, err := c.NewCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wb = NewWriteBatch()
+	wb.SetSecureDelete(true)
+	wb.Delete("key2")
+	t.Log("Delete", "key2")
+	_, err = c.Update(wb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	i := 0
+	for cur.Next() {
+		if i == len(expected) {
+			t.Fatal("unexpected key", cur.Key())
+		}
+		if cur.Key() != expected[i][0] || cur.Value() != expected[i][1] {
+			t.Errorf("expected %v => %v, got %v => %v",
+				expected[i][0], expected[i][1], cur.Key(), cur.Value())
+		} else {
+			t.Logf("got %v => %v", cur.Key(), cur.Value())
+		}
+		i++
+	}
+	if err = cur.Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", c.Stats())
+}

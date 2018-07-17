@@ -5,6 +5,7 @@ type WriteBatch struct {
 	sets           map[string]string
 	deletes        map[string]struct{}
 	allowOverwrite bool
+	secureDelete   bool
 }
 
 // NewWriteBatch returns a new WriteBatch.
@@ -33,6 +34,12 @@ func (wb *WriteBatch) Delete(key string) {
 // set, updates will be rolled back.
 func (wb *WriteBatch) AllowOverwrite(allow bool) {
 	wb.allowOverwrite = allow
+}
+
+// SetSecureDelete determines whether record values are cleared with zero
+// bytes when deleted.
+func (wb *WriteBatch) SetSecureDelete(secureDelete bool) {
+	wb.secureDelete = secureDelete
 }
 
 func (wb *WriteBatch) cleanup() {

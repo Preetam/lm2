@@ -299,6 +299,9 @@ KEYS_LOOP:
 		c.setDirty(rec.Offset, rec)
 		dirtyOffsets = append(dirtyOffsets, rec.Offset)
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
+		if wb.secureDelete {
+			walEntry.Push(newWALRecord(rec.Offset+recordHeaderSize+int64(rec.KeyLen), make([]byte, rec.ValLen)))
+		}
 	}
 
 	for _, offset := range overwrittenRecords {
@@ -317,6 +320,9 @@ KEYS_LOOP:
 		c.setDirty(rec.Offset, rec)
 		dirtyOffsets = append(dirtyOffsets, rec.Offset)
 		walEntry.Push(newWALRecord(rec.Offset, rec.recordHeader.bytes()))
+		if wb.secureDelete {
+			walEntry.Push(newWALRecord(rec.Offset+recordHeaderSize+int64(rec.KeyLen), make([]byte, rec.ValLen)))
+		}
 	}
 
 	c.LastCommit = currentOffset
